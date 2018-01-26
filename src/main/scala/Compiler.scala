@@ -24,7 +24,7 @@ private class Compiler {
   private def compile(term: Term): List[CompiledTerm] = term match {
     case And(a, b) => join(a, b)
     case Or(a, b) => compile(a) ++ compile(b)
-    case Rename(ds, fields) => List(CompiledTerm(compile(ds), ds.fields, fields))
+    case Rename(ds, fields) => List(CompiledTerm(compile(ds), fields))
     case Where(term, pred) => filter(term, pred)
     case _ => throw new RuntimeException("not implemented")
   }
@@ -41,9 +41,8 @@ private class Compiler {
   private def compile(view: View): Node = {
     if (!datasets.contains(view)) {
       val node = add(view, new Sink(nextId, Multiset()))
-      val target = CompiledTerm(node, view.fields, view.fields)
       for (source <- compile(view.body)) {
-        connect(source, target)
+        connectSink(source, node, view.fields)
       }
     }
     datasets(view)
@@ -53,7 +52,7 @@ private class Compiler {
     for (left <- compile(term)) yield {
       val right = add(new Filter(nextId, pred))
       connect(left.node, right)
-      CompiledTerm(right, left.inputSchema, left.outputSchema)
+      CompiledTerm(right, left.schema)
     }
   }
 
@@ -65,7 +64,7 @@ private class Compiler {
   }
 
   private def join(left: CompiledTerm, right: CompiledTerm): List[CompiledTerm] = {
-    val (s1, s2) = (left.outputSchema, right.outputSchema)
+    val (s1, s2) = (left.schema, right.schema)
 
     val both = s1.filter { x => s2.contains(x) }
     val onleft = both.map { x => s1.indexOf(x) }
@@ -81,12 +80,11 @@ private class Compiler {
 
     connect(left.node, joiner, isLeftSide = true)
     connect(right.node, joiner, isLeftSide = false)
-    List(CompiledTerm(joiner, Vector(), schema))
+    List(CompiledTerm(joiner, schema))
   }
 
-  private def connect(source: CompiledTerm, target: CompiledTerm): Unit = {
-    val src = source.outputSchema
-    val dst = target.inputSchema
+  private def connectSink(source: CompiledTerm, sink: Node, schema: Vector[String]) = {
+    val (src, dst) = (source.schema, schema)
 
     val missing = dst.toSet -- src.toSet
     if (missing.size > 0) {
@@ -94,12 +92,12 @@ private class Compiler {
     }
 
     if (src == dst) {
-      connect(source.node, target.node)
+      connect(source.node, sink)
     } else {
       val cols = dst.map { x => src.indexOf(x) }
       val swizzle = add(new Tranform(nextId, row => cols.map { i => row(i) }))
       connect(source.node, swizzle)
-      connect(swizzle, target.node)
+      connect(swizzle, sink)
     }
   }
 
@@ -124,11 +122,7 @@ private class Compiler {
 }
 
 
-private case class CompiledTerm(
-  node: Node,
-  inputSchema: Vector[String],
-  outputSchema: Vector[String]
-)
+private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
