@@ -126,7 +126,7 @@ private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long) = Response(
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean) = Response(
     replacement = None,
     inserts = if (isInsert && predicate(row)) Some(row) else None,
     deletes = if (!isInsert && predicate(row)) Some(row) else None
@@ -135,12 +135,14 @@ private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
 
 
 private class Join(id: Int, left: Grouping, right: Grouping, merge: Vector[Int])
-  extends Node(id)
+  extends Node(id) with Reset
 {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response = {
+  def reset() = new Join(id, left.reset(), right.reset(), merge)
+
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
     val (target, source) = if (isLeftSide) (left, right) else (right, left)
     val key = target.on.map { i => row(i) }
-    val (updatedRows, didChange) = target.rows.update(key, row, isInsert, time)
+    val (updatedRows, didChange) = target.rows.update(key, row, isInsert)
     val updatedSide = Grouping(target.on, updatedRows)
 
     val rows = if (didChange) {
@@ -166,11 +168,13 @@ private class Join(id: Int, left: Grouping, right: Grouping, merge: Vector[Int])
 }
 
 
-private case class Grouping(on: Vector[Int], rows: MultisetMap[Row, Row])
+private case class Grouping(on: Vector[Int], rows: MultisetMap[Row, Row]) {
+  def reset() = Grouping(on, rows.reset())
+}
 
 
 private class Tranform(id: Int, function: Row => Row) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long) = Response(
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean) = Response(
     replacement = None,
     inserts = if (isInsert) Some(function(row)) else None,
     deletes = if (isInsert) None else Some(function(row))
@@ -181,9 +185,11 @@ private class Tranform(id: Int, function: Row => Row) extends Node(id) {
 /** Represents a View in a database. It is essentially just a multiset of rows.
   * If you add a row to a Sink multiple times, then you have to remove it the
   * same number of times to really get it out of there. */
-private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response = {
-    val (newRows, didChange) = rows.update(row, isInsert, time)
+private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) with Reset {
+  def reset() = new Sink(id, rows.reset())
+
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
+    val (newRows, didChange) = rows.update(row, isInsert)
     Response(
       replacement = Some(new Sink(id, newRows)),
       inserts = if (didChange && isInsert) Some(row) else None,
@@ -195,7 +201,7 @@ private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) {
 
 /** Represents a Table in a database. It is essentially just a set of rows. */
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response = {
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
     (isInsert, rows.contains(row)) match {
       case (true, true) | (false, false) => Response(None, None, None)
       case (true, false) => Response(Some(new Source(id, rows + row)), Some(row), None)

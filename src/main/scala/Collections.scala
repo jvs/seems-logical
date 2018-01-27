@@ -2,6 +2,8 @@ package seems.logical
 
 
 case class MultisetMap[K, V](state: Map[K, Multiset[V]] = Map[K, Multiset[V]]()) {
+  def reset() = MultisetMap { state.mapValues(_.reset()) }
+
   def apply(key: K): Iterator[V] = {
     if (state.contains(key)) {
       state(key).items.keysIterator
@@ -10,9 +12,9 @@ case class MultisetMap[K, V](state: Map[K, Multiset[V]] = Map[K, Multiset[V]]())
     }
   }
 
-  def update(key: K, value: V, isInsert: Boolean, time: Long): (MultisetMap[K, V], Boolean) = {
+  def update(key: K, value: V, isInsert: Boolean): (MultisetMap[K, V], Boolean) = {
     val prev = state.getOrElse(key, Multiset[V]())
-    val (next, didChange) = prev.update(value, isInsert, time)
+    val (next, didChange) = prev.update(value, isInsert)
     if (isInsert || next.items.size > 0) {
       (MultisetMap(state + (key -> next)), didChange)
     } else {
@@ -22,32 +24,37 @@ case class MultisetMap[K, V](state: Map[K, Multiset[V]] = Map[K, Multiset[V]]())
 }
 
 
-case class Multiset[A](items: Map[A, (Int, Long)] = Map[A, (Int, Long)]()) {
+case class Multiset[A](items: Map[A, Int] = Map[A, Int](), visited: Set[A] = Set[A]()) {
   def toSet: Set[A] = items.keySet
+  def reset() = if (visited.isEmpty) this else Multiset(items)
 
-  def update(item: A, isInsert: Boolean, time: Long): (Multiset[A], Boolean) = {
-    if (isInsert) insert(item, time) else remove(item, time)
+  def update(item: A, isInsert: Boolean): (Multiset[A], Boolean) = {
+    if (isInsert) insert(item) else remove(item)
   }
 
-  private def insert(item: A, time: Long) = {
-    val (prevCount, prevTime) = items.getOrElse(item, (0, -1L))
-    if (time <= prevTime) {
+  private def insert(item: A) = {
+    if (visited.contains(item)) {
       (this, false)
     } else {
-      val next = items + (item -> (prevCount + 1, time))
-      (Multiset(next), prevCount == 0)
+      val prev = items.getOrElse(item, 0)
+      val next = items + (item -> (prev + 1))
+      (Multiset(next, visited + item), prev == 0)
     }
   }
 
-  private def remove(item: A, time: Long) = {
-    val (prevCount, prevTime) = items.getOrElse(item, (0, -1L))
-    val next = if (prevCount == 1) {
-      items - item
-    } else if (prevCount > 0) {
-      items + (item -> (prevCount - 1, time))
+  private def remove(item: A) = {
+    if (visited.contains(item)) {
+      (this, false)
     } else {
-      items
+      val prev = items.getOrElse(item, 0)
+      val next = if (prev == 1) {
+        items - item
+      } else if (prev > 0) {
+        items + (item -> (prev - 1))
+      } else {
+        items
+      }
+      (Multiset(next), prev == 1)
     }
-    (Multiset(next), prevCount == 1)
   }
 }

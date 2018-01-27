@@ -6,8 +6,7 @@ import scala.collection.mutable.ArrayBuffer
 class Database(
   private [logical] val datasets: Map[Dataset, Int],
   private [logical] val nodes: Vector[Node],
-  private [logical] val edges: Vector[Vector[Edge]],
-  private [logical] val time: Long = 0
+  private [logical] val edges: Vector[Vector[Edge]]
 ) {
   def apply(dataset: Dataset): Set[Row] = {
     nodes(datasets(dataset)) match {
@@ -36,21 +35,32 @@ class Database(
     }
   }
 
-  private [logical] def update(node: Option[Node], time: Long): Database = node match {
-    case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges, time)
+  private [logical] def reset(): Database = {
+    val newNodes = nodes.foldLeft(nodes) {
+      case (acc, r: Reset) => acc.updated(r.id, r.reset())
+      case (acc, _) => acc
+    }
+    new Database(datasets, newNodes, edges)
+  }
+
+  private [logical] def update(node: Option[Node]): Database = node match {
+    case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges)
     case None => this
   }
 }
 
 
 private abstract class Node(val id: Int) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response
 }
 
+private trait Reset {
+  val id: Int
+  def reset(): Node
+}
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
 private case class Broadcast(sender: Int, inserts: Iterable[Row], deletes: Iterable[Row])
-
 
 private case class Response(
   replacement: Option[Node],
@@ -61,13 +71,12 @@ private case class Response(
 
 private object run {
   def apply(start: Database, table: Table, row: Row, isInsert: Boolean): Database = {
-    val time = start.time + 1
-    var current = start
+    var current = start.reset()
     val broadcasts = ArrayBuffer[Broadcast]()
 
     val startNode = current.nodes(current.datasets(table))
-    val initialResp = startNode.receive(row, isInsert, true, time)
-    current = current.update(initialResp.replacement, time)
+    val initialResp = startNode.receive(row, isInsert, true)
+    current = current.update(initialResp.replacement)
     broadcasts += Broadcast(startNode.id, initialResp.inserts, initialResp.deletes)
 
     while (broadcasts.length > 0) {
@@ -76,14 +85,14 @@ private object run {
         val isLeftSide = edge.isLeftSide
         for (row <- broadcast.deletes) {
           val node = current.nodes(edge.receiver)
-          val resp = node.receive(row, false, edge.isLeftSide, time)
-          current = current.update(resp.replacement, time)
+          val resp = node.receive(row, false, edge.isLeftSide)
+          current = current.update(resp.replacement)
           broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
         for (row <- broadcast.inserts) {
           val node = current.nodes(edge.receiver)
-          val resp = node.receive(row, true, edge.isLeftSide, time)
-          current = current.update(resp.replacement, time)
+          val resp = node.receive(row, true, edge.isLeftSide)
+          current = current.update(resp.replacement)
           broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
       }
