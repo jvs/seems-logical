@@ -233,4 +233,23 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap4(Family.Ancestor) == snap2(Family.Ancestor))
   assert(snap4(Family.Siblings) == snap2(Family.Siblings))
 }
+
+"Try using a simple transform" - {
+  object Foo extends Schema {
+    val Bar = Table("x", "y")
+    val Baz = View("x", "y") requires {
+      Bar("x", "y") changing {
+        row => Vector[Any](
+          row(1).asInstanceOf[Int] + 1,
+          row(0).asInstanceOf[Int] + 1
+        )
+      }
+    }
+  }
+  val start = Foo.create()
+  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.remove(Foo.Bar, 3, 4)
+  assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
+  assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
+}
 }}

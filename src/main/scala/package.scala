@@ -18,16 +18,17 @@ package object logical {
 
   sealed trait Term {
     def and(other: Term): Term = And(this, other)
+    def butNot(other: Term): Term = ButNot(this, other)
+    def changing(function: Row => Row) = Changing(this, function)
     def or(other: Term): Term = Or(this, other)
-    def butNot(other: Term): Term = Subtract(this, other)
     def where(predicate: Row => Boolean) = Where(this, predicate)
-    // def then(function: Row => Row) = Then(this, function)
     // def expanding(function: Row => List[Row]) = Expand(this, function)
   }
 
   case class And(left: Term, right: Term) extends Term
+  case class ButNot(left: Term, right: Term) extends Term
+  case class Changing(term: Term, transform: Row => Row) extends Term
   case class Or(left: Term, right: Term) extends Term
-  case class Subtract(left: Term, right: Term) extends Term
   case class Rename(dataset: Dataset, fields: Vector[String]) extends Term
   case class Where(term: Term, predicate: Row => Boolean) extends Term
 

@@ -23,6 +23,7 @@ private class Compiler {
 
   private def compile(term: Term): List[CompiledTerm] = term match {
     case And(a, b) => join(a, b)
+    case Changing(term, func) => transform(term, func)
     case Or(a, b) => compile(a) ++ compile(b)
     case Rename(ds, fields) => List(CompiledTerm(compile(ds), fields))
     case Where(term, pred) => filter(term, pred)
@@ -51,6 +52,14 @@ private class Compiler {
   private def filter(term: Term, pred: Row => Boolean): List[CompiledTerm] = {
     for (left <- compile(term)) yield {
       val right = add(new Filter(nextId, pred))
+      connect(left.node, right)
+      CompiledTerm(right, left.schema)
+    }
+  }
+
+  private def transform(term: Term, func: Row => Row): List[CompiledTerm] = {
+    for (left <- compile(term)) yield {
+      val right = add(new Tranform(nextId, func))
       connect(left.node, right)
       CompiledTerm(right, left.schema)
     }
