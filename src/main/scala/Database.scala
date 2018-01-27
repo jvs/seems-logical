@@ -35,6 +35,11 @@ class Database(
       case (db, row) => run(db, table, row, isInsert)
     }
   }
+
+  private [logical] def update(node: Option[Node], time: Long): Database = node match {
+    case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges, time)
+    case None => this
+  }
 }
 
 
@@ -45,7 +50,6 @@ private abstract class Node(val id: Int) {
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
 private case class Broadcast(sender: Int, inserts: List[Row], deletes: List[Row])
-private case class Packet(edge: Edge, row: Row, isInsert: Boolean)
 
 
 private case class Response(
@@ -57,43 +61,30 @@ private case class Response(
 
 private object run {
   def apply(start: Database, table: Table, row: Row, isInsert: Boolean): Database = {
+    val time = start.time + 1
     var current = start
-    val packets = ArrayBuffer[Packet](
-      Packet(Edge(current.datasets(table), true), row, isInsert)
-    )
     val broadcasts = ArrayBuffer[Broadcast]()
-    val time = current.time + 1
 
-    var isBusy = true
-    while (isBusy) {
-      while (packets.length > 0) {
-        val packet = packets.remove(packets.length - 1)
-        val edge = packet.edge
-        val node = current.nodes(edge.receiver)
-        val resp = node.receive(packet.row, packet.isInsert, edge.isLeftSide, time)
-        resp.replacement.map { repl =>
-          current = new Database(
-            current.datasets,
-            current.nodes.updated(repl.id, repl),
-            current.edges,
-            time
-          )
+    val startNode = current.nodes(current.datasets(table))
+    val initialResp = startNode.receive(row, isInsert, true, time)
+    current = current.update(initialResp.replacement, time)
+    broadcasts += Broadcast(startNode.id, initialResp.inserts, initialResp.deletes)
+
+    while (broadcasts.length > 0) {
+      val broadcast = broadcasts.remove(broadcasts.length - 1)
+      for (edge <- current.edges(broadcast.sender)) {
+        val isLeftSide = edge.isLeftSide
+        for (row <- broadcast.deletes) {
+          val node = current.nodes(edge.receiver)
+          val resp = node.receive(row, false, edge.isLeftSide, time)
+          current = current.update(resp.replacement, time)
+          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
-        broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
-      }
-
-      if (broadcasts.length == 0) {
-        isBusy = false
-      } else {
-        val broadcast = broadcasts.remove(broadcasts.length - 1)
-        val edges = current.edges(broadcast.sender)
-        for (edge <- edges) {
-          for (row <- broadcast.deletes) {
-            packets += Packet(edge, row, false)
-          }
-          for (row <- broadcast.inserts) {
-            packets += Packet(edge, row, true)
-          }
+        for (row <- broadcast.inserts) {
+          val node = current.nodes(edge.receiver)
+          val resp = node.receive(row, true, edge.isLeftSide, time)
+          current = current.update(resp.replacement, time)
+          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
       }
     }
