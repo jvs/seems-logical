@@ -125,21 +125,6 @@ private class Compiler {
 private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
-private case class Edge(receiver: Int, isLeftSide: Boolean)
-
-
-private abstract class Node(val id: Int) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response
-}
-
-
-private case class Response(
-  replacement: Option[Node],
-  inserts: List[Row],
-  deletes: List[Row] = List()
-)
-
-
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
   def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long) = Response(
     replacement = None,

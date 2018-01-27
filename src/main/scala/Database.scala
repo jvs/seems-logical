@@ -38,17 +38,20 @@ class Database(
 }
 
 
-private case class Broadcast(
-  sender: Int,
+private abstract class Node(val id: Int) {
+  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response
+}
+
+
+private case class Edge(receiver: Int, isLeftSide: Boolean)
+private case class Broadcast(sender: Int, inserts: List[Row], deletes: List[Row])
+private case class Packet(edge: Edge, row: Row, isInsert: Boolean)
+
+
+private case class Response(
+  replacement: Option[Node],
   inserts: List[Row],
-  deletes: List[Row]
-)
-
-
-private case class Packet(
-  edge: Edge,
-  row: Row,
-  isInsert: Boolean
+  deletes: List[Row] = List()
 )
 
 
