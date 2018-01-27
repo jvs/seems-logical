@@ -71,7 +71,7 @@ private case class Response(
 
 private object run {
   def apply(start: Database, table: Table, row: Row, isInsert: Boolean): Database = {
-    var current = start.reset()
+    var current = start
     val broadcasts = ArrayBuffer[Broadcast]()
 
     val startNode = current.nodes(current.datasets(table))
@@ -97,6 +97,6 @@ private object run {
         }
       }
     }
-    current
+    current.reset()
   }
 }
