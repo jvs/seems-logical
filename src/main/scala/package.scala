@@ -7,6 +7,17 @@ package object logical {
   /** Define a Row as a Vector of "Any" objects. */
   type Row = Vector[Any]
 
+  class Record(val row: Row, val schema: Vector[String]) {
+    def apply[A](index: Int): A = row(index).asInstanceOf[A]
+    def apply[A](field: String): A = apply[A](schema.indexOf(field))
+  }
+
+  object Record {
+    def apply(items: (String, Any)*) = {
+      new Record(items.map(_._2).toVector, items.map(_._1).toVector)
+    }
+  }
+
   class Dataset(val fields: Vector[String]) {
     def apply(args: String*) = Rename(this, args.toVector)
   }
@@ -19,18 +30,18 @@ package object logical {
   sealed trait Term {
     def and(other: Term): Term = And(this, other)
     def butNot(other: Term): Term = ButNot(this, other)
-    def changing(function: Row => Row) = Changing(this, function)
+    def changing(function: Record => Record) = Changing(this, function)
     def or(other: Term): Term = Or(this, other)
-    def where(predicate: Row => Boolean) = Where(this, predicate)
-    // def expanding(function: Row => List[Row]) = Expand(this, function)
+    def where(predicate: Record => Boolean) = Where(this, predicate)
+    // def expanding(function: Record => List[Record]) = Expand(this, function)
   }
 
   case class And(left: Term, right: Term) extends Term
   case class ButNot(left: Term, right: Term) extends Term
-  case class Changing(term: Term, transform: Row => Row) extends Term
+  case class Changing(term: Term, transform: Record => Record) extends Term
   case class Or(left: Term, right: Term) extends Term
   case class Rename(dataset: Dataset, fields: Vector[String]) extends Term
-  case class Where(term: Term, predicate: Row => Boolean) extends Term
+  case class Where(term: Term, predicate: Record => Boolean) extends Term
 
   case class Statement(
     columns: Vector[Column],

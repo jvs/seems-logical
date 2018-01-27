@@ -1,7 +1,7 @@
 package test.seems.logical
 
 import utest._
-import seems.logical.{Schema, View}
+import seems.logical.{Record, Schema, View}
 import seems.logical.Row
 
 object R {
@@ -130,7 +130,7 @@ object DslTests extends TestSuite { val tests = Tests {
     val Siblings = View("a", "b") requires {
       SameFather("a", "b") and
       SameMother("a", "b") where {
-        row => row(0) != row(1)
+        record => record[String]("a") != record[String]("b")
       }
     }
   }
@@ -239,13 +239,33 @@ object DslTests extends TestSuite { val tests = Tests {
     val Bar = Table("x", "y")
     val Baz = View("x", "y") requires {
       Bar("x", "y") changing {
-        row => Vector[Any](
-          row(1).asInstanceOf[Int] + 1,
-          row(0).asInstanceOf[Int] + 1
+        record => Record(
+          "x" -> (record[Int](1) + 1),
+          "y" -> (record[Int](0) + 1)
         )
       }
     }
   }
+  val start = Foo.create()
+  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.remove(Foo.Bar, 3, 4)
+  assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
+  assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
+}
+
+"Try using a simple transform that changes the order of the fields" - {
+  object Foo extends Schema {
+    val Bar = Table("x", "y")
+    val Baz = View("x", "y") requires {
+      Bar("x", "y") changing {
+        record => Record(
+          "y" -> (record[Int](0) + 1),
+          "x" -> (record[Int](1) + 1)
+        )
+      }
+    }
+  }
+  // The rest is the same as before.
   val start = Foo.create()
   val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
   val snap2 = snap1.remove(Foo.Bar, 3, 4)

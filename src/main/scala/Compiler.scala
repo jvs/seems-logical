@@ -49,19 +49,35 @@ private class Compiler {
     datasets(view)
   }
 
-  private def filter(term: Term, pred: Row => Boolean): List[CompiledTerm] = {
+  private def filter(term: Term, pred: Record => Boolean): List[CompiledTerm] = {
     for (left <- compile(term)) yield {
-      val right = add(new Filter(nextId, pred))
+      val right = add(new Filter(nextId, wrapPredicate(pred, left.schema)))
       connect(left.node, right)
       CompiledTerm(right, left.schema)
     }
   }
 
-  private def transform(term: Term, func: Row => Row): List[CompiledTerm] = {
+  private def wrapPredicate(func: Record => Boolean, schema: Vector[String]): Row => Boolean = {
+    (row: Row) => func(new Record(row, schema))
+  }
+
+  private def transform(term: Term, func: Record => Record): List[CompiledTerm] = {
     for (left <- compile(term)) yield {
-      val right = add(new Tranform(nextId, func))
+      val right = add(new Tranform(nextId, wrapTransform(func, left.schema)))
       connect(left.node, right)
       CompiledTerm(right, left.schema)
+    }
+  }
+
+  private def wrapTransform(func: Record => Record, schema: Vector[String]): Row => Row = {
+    (row: Row) => {
+      val result = func(new Record(row, schema))
+      if (result.schema == schema) {
+        result.row
+      } else {
+        val get = result.schema.zip(result.row).toMap
+        schema.map { x => get(x) }
+      }
     }
   }
 
