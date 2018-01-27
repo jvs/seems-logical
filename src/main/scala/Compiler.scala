@@ -128,8 +128,8 @@ private case class CompiledTerm(node: Node, schema: Vector[String])
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
   def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long) = Response(
     replacement = None,
-    inserts = if (isInsert && predicate(row)) List(row) else List(),
-    deletes = if (!isInsert && predicate(row)) List(row) else List()
+    inserts = if (isInsert && predicate(row)) Some(row) else None,
+    deletes = if (!isInsert && predicate(row)) Some(row) else None
   )
 }
 
@@ -159,8 +159,8 @@ private class Join(id: Int, left: Grouping, right: Grouping, merge: Vector[Int])
         right = if (isLeftSide) right else updatedSide,
         merge = merge
       )),
-      inserts = if (isInsert) rows else List(),
-      deletes = if (isInsert) List() else rows
+      inserts = if (isInsert) rows else None,
+      deletes = if (isInsert) None else rows
     )
   }
 }
@@ -172,8 +172,8 @@ private case class Grouping(on: Vector[Int], rows: MultisetMap[Row, Row])
 private class Tranform(id: Int, function: Row => Row) extends Node(id) {
   def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long) = Response(
     replacement = None,
-    inserts = if (isInsert) List(function(row)) else List(),
-    deletes = if (isInsert) List() else List(function(row))
+    inserts = if (isInsert) Some(function(row)) else None,
+    deletes = if (isInsert) None else Some(function(row))
   )
 }
 
@@ -186,8 +186,8 @@ private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) {
     val (newRows, didChange) = rows.update(row, isInsert, time)
     Response(
       replacement = Some(new Sink(id, newRows)),
-      inserts = if (didChange && isInsert) List(row) else List(),
-      deletes = if (didChange && !isInsert) List(row) else List()
+      inserts = if (didChange && isInsert) Some(row) else None,
+      deletes = if (didChange && !isInsert) Some(row) else None
     )
   }
 }
@@ -197,9 +197,9 @@ private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) {
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
   def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response = {
     (isInsert, rows.contains(row)) match {
-      case (true, true) | (false, false) => Response(None, List(), List())
-      case (true, false) => Response(Some(new Source(id, rows + row)), List(row), List())
-      case (false, true) => Response(Some(new Source(id, rows - row)), List(), List(row))
+      case (true, true) | (false, false) => Response(None, None, None)
+      case (true, false) => Response(Some(new Source(id, rows + row)), Some(row), None)
+      case (false, true) => Response(Some(new Source(id, rows - row)), None, Some(row))
     }
   }
 }

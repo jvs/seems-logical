@@ -49,13 +49,13 @@ private abstract class Node(val id: Int) {
 
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
-private case class Broadcast(sender: Int, inserts: List[Row], deletes: List[Row])
+private case class Broadcast(sender: Int, inserts: Iterable[Row], deletes: Iterable[Row])
 
 
 private case class Response(
   replacement: Option[Node],
-  inserts: List[Row],
-  deletes: List[Row] = List()
+  inserts: Iterable[Row],
+  deletes: Iterable[Row] = None
 )
 
 
