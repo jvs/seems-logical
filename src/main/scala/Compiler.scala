@@ -74,8 +74,8 @@ private class Compiler {
     val merge = s1.zipWithIndex.map(_._2) ++ rest
       .map { x => s1.length + s2.indexOf(x) }
 
-    val leftside = GroupBuffer(onleft, MultisetMap[Row, Row]())
-    val rightside = GroupBuffer(onright, MultisetMap[Row, Row]())
+    val leftside = Grouping(onleft, MultisetMap[Row, Row]())
+    val rightside = Grouping(onright, MultisetMap[Row, Row]())
     val joiner = add(new Join(nextId, leftside, rightside, merge))
 
     connect(left.node, joiner, isLeftSide = true)
@@ -134,14 +134,14 @@ private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
 }
 
 
-private class Join(id: Int, left: GroupBuffer, right: GroupBuffer, merge: Vector[Int])
+private class Join(id: Int, left: Grouping, right: Grouping, merge: Vector[Int])
   extends Node(id)
 {
   def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean, time: Long): Response = {
     val (target, source) = if (isLeftSide) (left, right) else (right, left)
     val key = target.on.map { i => row(i) }
     val (updatedRows, didChange) = target.rows.update(key, row, isInsert, time)
-    val updatedSide = GroupBuffer(target.on, updatedRows)
+    val updatedSide = Grouping(target.on, updatedRows)
 
     val rows = if (didChange) {
       source.rows(key).map { other =>
@@ -166,7 +166,7 @@ private class Join(id: Int, left: GroupBuffer, right: GroupBuffer, merge: Vector
 }
 
 
-private case class GroupBuffer(on: Vector[Int], rows: MultisetMap[Row, Row])
+private case class Grouping(on: Vector[Int], rows: MultisetMap[Row, Row])
 
 
 private class Tranform(id: Int, function: Row => Row) extends Node(id) {
