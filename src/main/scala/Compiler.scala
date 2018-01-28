@@ -101,8 +101,8 @@ private class Compiler {
     val leftmerge = s1.zipWithIndex.map(_._2) ++ restIndices.map(_ + s1.length)
     val rightmerge = s1.zipWithIndex.map(_._2 + s2.length) ++ restIndices
 
-    val leftside = Grouping(onleft, leftmerge)
-    val rightside = Grouping(onright, rightmerge)
+    val leftside = Side(onleft, leftmerge)
+    val rightside = Side(onright, rightmerge)
     val joinNode = add(new Join(nextId, leftside, rightside))
 
     connect(left.node, joinNode, isLeftSide = true)
@@ -161,7 +161,7 @@ private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
 }
 
 
-private class Join(id: Int, left: Grouping, right: Grouping)
+private class Join(id: Int, left: Side, right: Side)
   extends Node(id) with Reset
 {
   def reset() = new Join(id, left.reset(), right.reset())
@@ -218,21 +218,21 @@ private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
 }
 
 
-case class Grouping(
+case class Side(
   on: Vector[Int],
   merge: Vector[Int],
   rows: RowCounter = RowCounter(),
   groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
 {
-  def reset() = Grouping(on, merge, rows.reset(), groups)
+  def reset() = Side(on, merge, rows.reset(), groups)
   def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
 
   def update(
     cast: Broadcast,
-    otherGroup: Grouping,
+    otherGroup: Side,
     inserted: ArrayBuffer[Row],
     deleted: ArrayBuffer[Row]
-  ): Grouping = {
+  ): Side = {
     // Update our row-counter with our new rows.
     val tmpInserted = ArrayBuffer[Row]()
     val tmpDeleted = ArrayBuffer[Row]()
@@ -271,7 +271,7 @@ case class Grouping(
       }
     }
 
-    return Grouping(on, merge, newRows, newGroups)
+    return Side(on, merge, newRows, newGroups)
   }
 }
 
