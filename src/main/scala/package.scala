@@ -27,18 +27,26 @@ package object logical {
     def body: Term = term
   }
 
-  sealed trait Term {
+  sealed trait Term { self =>
     def and(other: Term): Term = And(this, other)
     def butNot(other: Term): Term = ButNot(this, other)
     def changing(function: Record => Record) = Changing(this, function)
+    def expandingTo(schema: String*) = ExandBuilder(self, schema.toVector)
+    // def groupingBy(function: Record => Any) = GroupingBy(this, function)
     def or(other: Term): Term = Or(this, other)
     def where(predicate: Record => Boolean) = Where(this, predicate)
-    // def expanding(function: Record => List[Record]) = Expand(this, function)
   }
 
   case class And(left: Term, right: Term) extends Term
   case class ButNot(left: Term, right: Term) extends Term
   case class Changing(term: Term, transform: Record => Record) extends Term
+
+  case class Expanding(
+    term: Term,
+    schema: Vector[String],
+    expand: Record => List[Record]
+  ) extends Term
+
   case class Or(left: Term, right: Term) extends Term
   case class Rename(dataset: Dataset, fields: Vector[String]) extends Term
   case class Where(term: Term, predicate: Record => Boolean) extends Term
@@ -70,4 +78,8 @@ package object logical {
   }
 
   case class SchemaError(message: String) extends Exception(message)
+
+  case class ExandBuilder(term: Term, schema: Vector[String]) {
+    def using(function: Record => List[Record]) = Expanding(term, schema, function)
+  }
 }

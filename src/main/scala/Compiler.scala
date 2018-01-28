@@ -25,6 +25,7 @@ private class Compiler {
   private def compile(term: Term): List[CompiledTerm] = term match {
     case And(a, b) => join(a, b)
     case Changing(term, func) => transform(term, func)
+    case Expanding(term, schema, func) => expand(term, schema, func)
     case Or(a, b) => compile(a) ++ compile(b)
     case Rename(ds, fields) => List(CompiledTerm(compile(ds), fields))
     case Where(term, pred) => filter(term, pred)
@@ -48,6 +49,36 @@ private class Compiler {
       }
     }
     datasets(view)
+  }
+
+  private def expand(
+    term: Term,
+    schema: Vector[String],
+    func: Record => List[Record]
+  ): List[CompiledTerm] = {
+    for (left <- compile(term)) yield {
+      val right = add(new Expand(nextId, wrapExpand(func, left.schema, schema)))
+      connect(left.node, right)
+      CompiledTerm(right, schema)
+    }
+  }
+
+  private def wrapExpand(
+    func: Record => List[Record],
+    inputSchema: Vector[String],
+    outputSchema: Vector[String]
+  ): Row => List[Row] = {
+    (row: Row) => {
+      val records = func(new Record(row, inputSchema))
+      records.map { rec =>
+        if (rec.schema == outputSchema) {
+          rec.row
+        } else {
+          val get = rec.schema.zip(rec.row).toMap
+          outputSchema.map { x => get(x) }
+        }
+      }
+    }
   }
 
   private def filter(term: Term, pred: Record => Boolean): List[CompiledTerm] = {
@@ -150,6 +181,15 @@ private class Compiler {
 
 
 private case class CompiledTerm(node: Node, schema: Vector[String])
+
+
+private class Expand(id: Int, function: Row => List[Row]) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
+    replacement = None,
+    inserts = cast.inserts.flatMap(function),
+    deletes = cast.deletes.flatMap(function)
+  )
+}
 
 
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {

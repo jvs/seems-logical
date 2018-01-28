@@ -271,4 +271,29 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
 }
+
+"Try using a simple expansion." - {
+  object Foo extends Schema {
+    val Bar = Table("x", "y", "z", "w")
+    val Baz = View("x", "other") requires {
+      Bar("x", "y", "z", "w") expandingTo ("x", "other") using {
+        rec => List(
+          Record("x" -> rec[Int]("x"), "other" -> rec[Int]("y")),
+          Record("x" -> rec[Int]("x"), "other" -> rec[Int]("z")),
+          // Try flipping the order one time, to make sure that the record
+          // is adapted correctly.
+          Record("other" -> rec[Int]("w"), "x" -> rec[Int]("x"))
+        )
+      }
+    }
+  }
+  val start = Foo.create()
+  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6, 7, 8)
+  val snap2 = snap1.remove(Foo.Bar, 5, 6, 7, 8)
+  assert(snap1(Foo.Baz) == Set(
+    R(1, 2), R(1, 3), R(1, 4),
+    R(5, 6), R(5, 7), R(5, 8)
+  ))
+  assert(snap2(Foo.Baz) == Set(R(1, 2), R(1, 3), R(1, 4)))
+}
 }}
