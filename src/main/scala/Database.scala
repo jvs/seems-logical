@@ -91,9 +91,7 @@ private object run {
       broadcasts += Broadcast(initialNode.id, initialResp.inserts, initialResp.deletes)
     }
 
-    var counter = 0
-    while (broadcasts.length > 0 && counter < 100000) {
-      counter += 1
+    while (broadcasts.length > 0) {
       val broadcast = broadcasts.remove(broadcasts.length - 1)
       for (edge <- current.edges(broadcast.sender)) {
         val node = current.nodes(edge.receiver)
