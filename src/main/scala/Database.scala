@@ -51,7 +51,7 @@ class Database(
 
 
 private abstract class Node(val id: Int) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response
 }
 
 private trait Reset {
@@ -60,12 +60,17 @@ private trait Reset {
 }
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
-private case class Broadcast(sender: Int, inserts: Iterable[Row], deletes: Iterable[Row])
+
+private case class Broadcast(
+  sender: Int,
+  inserts: ArrayBuffer[Row],
+  deletes: ArrayBuffer[Row]
+)
 
 private case class Response(
   replacement: Option[Node],
-  inserts: Iterable[Row],
-  deletes: Iterable[Row] = None
+  inserts: ArrayBuffer[Row],
+  deletes: ArrayBuffer[Row]
 )
 
 
@@ -74,25 +79,27 @@ private object run {
     var current = start
     val broadcasts = ArrayBuffer[Broadcast]()
 
-    val startNode = current.nodes(current.datasets(table))
-    val initialResp = startNode.receive(row, isInsert, true)
+    val initialNode = current.nodes(current.datasets(table))
+    val initialCast = Broadcast(
+      sender = -1,
+      inserts = if (isInsert) ArrayBuffer(row) else ArrayBuffer(),
+      deletes = if (isInsert) ArrayBuffer() else ArrayBuffer(row)
+    )
+    val initialResp = initialNode.receive(initialCast, isInsert)
     current = current.update(initialResp.replacement)
-    broadcasts += Broadcast(startNode.id, initialResp.inserts, initialResp.deletes)
+    if (initialResp.inserts.nonEmpty || initialResp.deletes.nonEmpty) {
+      broadcasts += Broadcast(initialNode.id, initialResp.inserts, initialResp.deletes)
+    }
 
-    while (broadcasts.length > 0) {
+    var counter = 0
+    while (broadcasts.length > 0 && counter < 100000) {
+      counter += 1
       val broadcast = broadcasts.remove(broadcasts.length - 1)
       for (edge <- current.edges(broadcast.sender)) {
-        val isLeftSide = edge.isLeftSide
-        for (row <- broadcast.deletes) {
-          val node = current.nodes(edge.receiver)
-          val resp = node.receive(row, false, edge.isLeftSide)
-          current = current.update(resp.replacement)
-          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
-        }
-        for (row <- broadcast.inserts) {
-          val node = current.nodes(edge.receiver)
-          val resp = node.receive(row, true, edge.isLeftSide)
-          current = current.update(resp.replacement)
+        val node = current.nodes(edge.receiver)
+        val resp = node.receive(broadcast, edge.isLeftSide)
+        current = current.update(resp.replacement)
+        if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
           broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
       }

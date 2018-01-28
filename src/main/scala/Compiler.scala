@@ -1,12 +1,13 @@
 package seems.logical
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 
 private class Compiler {
   val datasets = mutable.Map[Dataset, Node]()
-  val nodes = mutable.ArrayBuffer[Node]()
-  val edges = mutable.ArrayBuffer[mutable.Set[Edge]]()
+  val nodes = ArrayBuffer[Node]()
+  val edges = ArrayBuffer[mutable.Set[Edge]]()
 
   def add(datasets: List[Dataset]): this.type = {
     datasets.foreach(compile)
@@ -41,7 +42,7 @@ private class Compiler {
 
   private def compile(view: View): Node = {
     if (!datasets.contains(view)) {
-      val node = add(view, new Sink(nextId, Multiset()))
+      val node = add(view, new Sink(nextId, RowCounter()))
       for (source <- compile(view.body)) {
         connectSink(source, node, view.fields)
       }
@@ -95,17 +96,18 @@ private class Compiler {
     val onleft = both.map { x => s1.indexOf(x) }
     val onright = both.map { x => s2.indexOf(x) }
     val rest = s2.filter { x => !both.contains(x) }
+    val restIndices = rest.map { x => s2.indexOf(x) }
     val schema = s1 ++ rest
-    val merge = s1.zipWithIndex.map(_._2) ++ rest
-      .map { x => s1.length + s2.indexOf(x) }
+    val leftmerge = s1.zipWithIndex.map(_._2) ++ restIndices.map(_ + s1.length)
+    val rightmerge = s1.zipWithIndex.map(_._2 + s2.length) ++ restIndices
 
-    val leftside = Grouping(onleft, MultisetMap[Row, Row]())
-    val rightside = Grouping(onright, MultisetMap[Row, Row]())
-    val joiner = add(new Join(nextId, leftside, rightside, merge))
+    val leftside = Grouping(onleft, leftmerge)
+    val rightside = Grouping(onright, rightmerge)
+    val joinNode = add(new Join(nextId, leftside, rightside))
 
-    connect(left.node, joiner, isLeftSide = true)
-    connect(right.node, joiner, isLeftSide = false)
-    List(CompiledTerm(joiner, schema))
+    connect(left.node, joinNode, isLeftSide = true)
+    connect(right.node, joinNode, isLeftSide = false)
+    List(CompiledTerm(joinNode, schema))
   }
 
   private def connectSink(source: CompiledTerm, sink: Node, schema: Vector[String]) = {
@@ -151,58 +153,39 @@ private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean) = Response(
+  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
     replacement = None,
-    inserts = if (isInsert && predicate(row)) Some(row) else None,
-    deletes = if (!isInsert && predicate(row)) Some(row) else None
+    inserts = cast.inserts.filter(predicate),
+    deletes = cast.deletes.filter(predicate)
   )
 }
 
 
-private class Join(id: Int, left: Grouping, right: Grouping, merge: Vector[Int])
+private class Join(id: Int, left: Grouping, right: Grouping)
   extends Node(id) with Reset
 {
-  def reset() = new Join(id, left.reset(), right.reset(), merge)
+  def reset() = new Join(id, left.reset(), right.reset())
 
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
-    val (target, source) = if (isLeftSide) (left, right) else (right, left)
-    val key = target.on.map { i => row(i) }
-    val (updatedRows, didChange) = target.rows.update(key, row, isInsert)
-    val updatedSide = Grouping(target.on, updatedRows)
-
-    val rows = if (didChange) {
-      source.rows(key).map { other =>
-        val full = if (isLeftSide) row ++ other else other ++ row
-        merge.map { i => full(i) }
-      }.toList
-    } else {
-      List()
-    }
-
-    Response(
-      replacement = Some(new Join(
-        id = id,
-        left = if (isLeftSide) updatedSide else left,
-        right = if (isLeftSide) right else updatedSide,
-        merge = merge
-      )),
-      inserts = if (isInsert) rows else None,
-      deletes = if (isInsert) None else rows
-    )
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    val (target, other) = if (isLeftSide) (left, right) else (right, left)
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+    val newTarget = target.update(cast, other, inserted, deleted)
+    val repl = if (newTarget eq target) None else Some(new Join(
+      id = id,
+      left = if (isLeftSide) newTarget else left,
+      right = if (isLeftSide) right else newTarget
+    ))
+    Response(repl, inserted, deleted)
   }
 }
 
 
-private case class Grouping(on: Vector[Int], rows: MultisetMap[Row, Row]) {
-  def reset() = Grouping(on, rows.reset())
-}
-
-
 private class Tranform(id: Int, function: Row => Row) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean) = Response(
+  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
     replacement = None,
-    inserts = if (isInsert) Some(function(row)) else None,
-    deletes = if (isInsert) None else Some(function(row))
+    inserts = cast.inserts.map(function),
+    deletes = cast.deletes.map(function)
   )
 }
 
@@ -210,27 +193,135 @@ private class Tranform(id: Int, function: Row => Row) extends Node(id) {
 /** Represents a View in a database. It is essentially just a multiset of rows.
   * If you add a row to a Sink multiple times, then you have to remove it the
   * same number of times to really get it out of there. */
-private class Sink(id: Int, val rows: Multiset[Row]) extends Node(id) with Reset {
+private class Sink(id: Int, val rows: RowCounter) extends Node(id) with Reset {
   def reset() = new Sink(id, rows.reset())
 
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
-    val (newRows, didChange) = rows.update(row, isInsert)
-    Response(
-      replacement = Some(new Sink(id, newRows)),
-      inserts = if (didChange && isInsert) Some(row) else None,
-      deletes = if (didChange && !isInsert) Some(row) else None
-    )
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+    val newRows = rows.update(cast, inserted, deleted)
+    val repl = if (newRows eq rows) None else Some(new Sink(id, newRows))
+    Response(repl, inserted, deleted)
   }
 }
 
 
 /** Represents a Table in a database. It is essentially just a set of rows. */
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
-  def receive(row: Row, isInsert: Boolean, isLeftSide: Boolean): Response = {
-    (isInsert, rows.contains(row)) match {
-      case (true, true) | (false, false) => Response(None, None, None)
-      case (true, false) => Response(Some(new Source(id, rows + row)), Some(row), None)
-      case (false, true) => Response(Some(new Source(id, rows - row)), None, Some(row))
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    val inserted = cast.inserts.filter(x => !rows(x))
+    val deleted = cast.deletes.filter(x => rows(x))
+    val isNop = inserted.isEmpty && deleted.isEmpty
+    val repl = if (isNop) None else Some(new Source(id, rows ++ inserted -- deleted))
+    Response(repl, inserted, deleted)
+  }
+}
+
+
+case class Grouping(
+  on: Vector[Int],
+  merge: Vector[Int],
+  rows: RowCounter = RowCounter(),
+  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
+{
+  def reset() = Grouping(on, merge, rows.reset(), groups)
+  def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
+
+  def update(
+    cast: Broadcast,
+    otherGroup: Grouping,
+    inserted: ArrayBuffer[Row],
+    deleted: ArrayBuffer[Row]
+  ): Grouping = {
+    // Update our row-counter with our new rows.
+    val tmpInserted = ArrayBuffer[Row]()
+    val tmpDeleted = ArrayBuffer[Row]()
+    val newRows = rows.update(cast, tmpInserted, tmpDeleted)
+
+    // If the row-counter didn't change, then we won't change either. Exit early.
+    if (newRows eq rows) {
+      return this
     }
+
+    var newGroups = groups
+    for (row <- tmpInserted) {
+      val key = on.map { i => row(i) }
+      if (newGroups.contains(key)) {
+        newGroups += (key -> (newGroups(key) + row))
+      } else {
+        newGroups += (key -> Set(row))
+      }
+      for (other <- otherGroup(key)) {
+        val paired = row ++ other
+        inserted += merge.map { i => paired(i) }
+      }
+    }
+
+    for (row <- tmpDeleted) {
+      val key = on.map { i => row(i) }
+      val group = newGroups(key) - row
+      if (group.size > 0) {
+        newGroups += (key -> group)
+      } else {
+        newGroups -= key
+      }
+      for (other <- otherGroup(key)) {
+        val paired = row ++ other
+        deleted += merge.map { i => paired(i) }
+      }
+    }
+
+    return Grouping(on, merge, newRows, newGroups)
+  }
+}
+
+
+case class RowCounter(
+  rows: Map[Row, Int] = Map[Row, Int](),
+  visited: Set[Row] = Set[Row]()
+) {
+  def toSet: Set[Row] = rows.keySet
+  def reset() = if (visited.isEmpty) this else RowCounter(rows, Set())
+
+  def update(cast: Broadcast, inserted: ArrayBuffer[Row], deleted: ArrayBuffer[Row]) = {
+    var newRows = rows
+    var newVisited = visited
+
+    for (row <- cast.inserts) {
+      // Ignore this row if we've already seen it.
+      if (!newVisited(row)) {
+        // Record that we've now visited this row.
+        newVisited += row
+        // Increment this row's count.
+        val prev = newRows.getOrElse(row, 0)
+        newRows += (row -> (prev + 1))
+        // If the previous count was zero, then record that we inserted this row
+        // by adding it to the "inserted" output buffer.
+        if (prev == 0) {
+          inserted += row
+        }
+      }
+    }
+
+    for (row <- cast.deletes) {
+      // As above, ignore this row if we've already seen it.
+      if (!newVisited(row)) {
+        // Record that we've now visited this row.
+        newVisited += row
+        val prev = newRows.getOrElse(row, 0)
+        // If this row's count was 1, then delete it from the table.
+        // (And add it to the "deleted" output buffer.)
+        if (prev == 1) {
+          newRows -= row
+          deleted += row
+        } else if (prev > 0) {
+          // If the count is positive (basically, not 0), then decrement it.
+          newRows += (row -> (prev - 1))
+        }
+      }
+    }
+
+    // If we didn't visit any new rows, then we know that nothing changed.
+    if (newVisited eq visited) this else RowCounter(newRows, newVisited)
   }
 }

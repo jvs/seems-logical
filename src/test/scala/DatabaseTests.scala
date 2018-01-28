@@ -76,7 +76,7 @@ object DslTests extends TestSuite { val tests = Tests {
   ))
 }
 
-"Try joining two simple tables" - {
+"Try joining two simple tables." - {
   object Foo extends Schema {
     val Bar = Table("x", "y")
     val Baz = Table("z", "w")
@@ -102,7 +102,7 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap3(Foo.Fiz) == Set(R(1, 2, 3), R(3, 4, 5)))
 }
 
-"Try a simple ancestor relation" - {
+"Try a simple ancestor relation." - {
   object Family extends Schema {
     val Father = Table("father", "child")
     val Mother = Table("mother", "child")
@@ -233,7 +233,7 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap4(Family.Siblings) == snap2(Family.Siblings))
 }
 
-"Try using a simple transform" - {
+"Try using a simple transform." - {
   object Foo extends Schema {
     val Bar = Table("x", "y")
     val Baz = View("x", "y") requires {
@@ -252,7 +252,7 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
 }
 
-"Try using a simple transform that changes the order of the fields" - {
+"Try using a simple transform that changes the order of the fields." - {
   object Foo extends Schema {
     val Bar = Table("x", "y")
     val Baz = View("x", "y") requires {
