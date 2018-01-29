@@ -22,13 +22,14 @@ private class Compiler {
 
   private def nextId = nodes.length
 
-  private def compile(term: Term): List[CompiledTerm] = term match {
-    case And(a, b) => join(a, b)
-    case Changing(term, func) => transform(term, func)
-    case Expanding(term, schema, func) => expand(term, schema, func)
-    case Or(a, b) => compile(a) ++ compile(b)
-    case Rename(ds, fields) => List(CompiledTerm(compile(ds), fields))
-    case Where(term, pred) => filter(term, pred)
+  private def compile(term: Term): CompiledTerm = term match {
+    case And(a, b) => multiply(compile(a), compile(b))
+    case ButNot(a, b) => subtract(compile(a), compile(b))
+    case Changing(term, func) => transform(compile(term), func)
+    case Expanding(term, schema, func) => expand(compile(term), schema, func)
+    case Or(a, b) => add(compile(a), compile(b))
+    case Rename(ds, fields) => CompiledTerm(compile(ds), fields)
+    case Where(term, pred) => filter(compile(term), pred)
     case _ => throw new RuntimeException("not implemented")
   }
 
@@ -43,24 +44,31 @@ private class Compiler {
 
   private def compile(view: View): Node = {
     if (!datasets.contains(view)) {
-      val node = add(view, new Sink(nextId, RowCounter()))
-      for (source <- compile(view.body)) {
-        connectSink(source, node, view.fields)
-      }
+      val viewNode = add(view, new Source(nextId, Set()))
+      connectView(compile(view.body), viewNode, view.fields)
     }
     datasets(view)
   }
 
+  private def add(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
+    val (s1, s2) = (left.schema, right.schema)
+    val schema = s1.filter { x => s2.contains(x) }
+    val keepleft = schema.map { x => s1.indexOf(x) }
+    val keepright = schema.map { x => s2.indexOf(x) }
+    val node = add(new Add(nextId, Summand(keepleft), Summand(keepright)))
+    connect(left.node, node, isLeftSide = true)
+    connect(right.node, node, isLeftSide = false)
+    CompiledTerm(node, schema)
+  }
+
   private def expand(
-    term: Term,
+    left: CompiledTerm,
     schema: Vector[String],
     func: Record => List[Record]
-  ): List[CompiledTerm] = {
-    for (left <- compile(term)) yield {
-      val right = add(new Expand(nextId, wrapExpand(func, left.schema, schema)))
-      connect(left.node, right)
-      CompiledTerm(right, schema)
-    }
+  ): CompiledTerm = {
+    val right = add(new Expand(nextId, wrapExpand(func, left.schema, schema)))
+    connect(left.node, right)
+    CompiledTerm(right, schema)
   }
 
   private def wrapExpand(
@@ -81,24 +89,20 @@ private class Compiler {
     }
   }
 
-  private def filter(term: Term, pred: Record => Boolean): List[CompiledTerm] = {
-    for (left <- compile(term)) yield {
-      val right = add(new Filter(nextId, wrapPredicate(pred, left.schema)))
-      connect(left.node, right)
-      CompiledTerm(right, left.schema)
-    }
+  private def filter(left: CompiledTerm, pred: Record => Boolean): CompiledTerm = {
+    val right = add(new Filter(nextId, wrapPredicate(pred, left.schema)))
+    connect(left.node, right)
+    CompiledTerm(right, left.schema)
   }
 
   private def wrapPredicate(func: Record => Boolean, schema: Vector[String]): Row => Boolean = {
     (row: Row) => func(new Record(row, schema))
   }
 
-  private def transform(term: Term, func: Record => Record): List[CompiledTerm] = {
-    for (left <- compile(term)) yield {
-      val right = add(new Tranform(nextId, wrapTransform(func, left.schema)))
-      connect(left.node, right)
-      CompiledTerm(right, left.schema)
-    }
+  private def transform(left: CompiledTerm, func: Record => Record): CompiledTerm = {
+    val right = add(new Transform(nextId, wrapTransform(func, left.schema)))
+    connect(left.node, right)
+    CompiledTerm(right, left.schema)
   }
 
   private def wrapTransform(func: Record => Record, schema: Vector[String]): Row => Row = {
@@ -113,14 +117,7 @@ private class Compiler {
     }
   }
 
-  private def join(left: Term, right: Term): List[CompiledTerm] = {
-    val compiledLeft = compile(left)
-    val compiledRight = compile(right)
-    val pairs = for (a <- compiledLeft; b <- compiledRight) yield (a, b)
-    pairs.flatMap { case (a, b) => join(a, b) }
-  }
-
-  private def join(left: CompiledTerm, right: CompiledTerm): List[CompiledTerm] = {
+  private def multiply(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
     val (s1, s2) = (left.schema, right.schema)
 
     val both = s1.filter { x => s2.contains(x) }
@@ -132,17 +129,28 @@ private class Compiler {
     val leftmerge = s1.zipWithIndex.map(_._2) ++ restIndices.map(_ + s1.length)
     val rightmerge = s1.zipWithIndex.map(_._2 + s2.length) ++ restIndices
 
-    val leftside = Side(onleft, leftmerge)
-    val rightside = Side(onright, rightmerge)
-    val joinNode = add(new Join(nextId, leftside, rightside))
+    val leftside = Multiplicand(onleft, leftmerge)
+    val rightside = Multiplicand(onright, rightmerge)
+    val node = add(new Multiply(nextId, leftside, rightside))
 
-    connect(left.node, joinNode, isLeftSide = true)
-    connect(right.node, joinNode, isLeftSide = false)
-    List(CompiledTerm(joinNode, schema))
+    connect(left.node, node, isLeftSide = true)
+    connect(right.node, node, isLeftSide = false)
+    CompiledTerm(node, schema)
   }
 
-  private def connectSink(source: CompiledTerm, sink: Node, schema: Vector[String]) = {
-    val (src, dst) = (source.schema, schema)
+  private def subtract(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
+    val (s1, s2) = (left.schema, right.schema)
+    val both = s1.filter { x => s2.contains(x) }
+    val onleft = both.map { x => s1.indexOf(x) }
+    val onright = both.map { x => s2.indexOf(x) }
+    val sub = add(new Subtract(nextId, PositiveSide(onleft), NegativeSide(onright)))
+    connect(left.node, sub, isLeftSide = true)
+    connect(right.node, sub, isLeftSide = false)
+    CompiledTerm(sub, left.schema)
+  }
+
+  private def connectView(term: CompiledTerm, viewNode: Node, schema: Vector[String]) = {
+    val (src, dst) = (term.schema, schema)
 
     val missing = dst.toSet -- src.toSet
     if (missing.size > 0) {
@@ -150,12 +158,12 @@ private class Compiler {
     }
 
     if (src == dst) {
-      connect(source.node, sink)
+      connect(term.node, viewNode)
     } else {
       val cols = dst.map { x => src.indexOf(x) }
-      val swizzle = add(new Tranform(nextId, row => cols.map { i => row(i) }))
-      connect(source.node, swizzle)
-      connect(swizzle, sink)
+      val swizzle = add(new Transform(nextId, row => cols.map { i => row(i) }))
+      connect(term.node, swizzle)
+      connect(swizzle, viewNode)
     }
   }
 
@@ -183,12 +191,38 @@ private class Compiler {
 private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
-private class Expand(id: Int, function: Row => List[Row]) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
-    replacement = None,
-    inserts = cast.inserts.flatMap(function),
-    deletes = cast.deletes.flatMap(function)
-  )
+private class Add(id: Int, left: Summand, right: Summand) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    val (target, other) = if (isLeftSide) (left, right) else (right, left)
+    val isRecursive = cast.visited(id)
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+    val newTarget = target.update(cast, other, isRecursive, inserted, deleted)
+    val repl = if (newTarget eq target) None else Some(new Add(
+      id = id,
+      left = if (isLeftSide) newTarget else left,
+      right = if (isLeftSide) right else newTarget
+    ))
+    Response(repl, inserted, deleted)
+  }
+}
+
+
+private class Expand(
+  id: Int,
+  function: Row => List[Row],
+  output: RowCounter = RowCounter()
+) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean) = {
+    val cooked = cast.copy(
+      inserts = cast.inserts.flatMap(function),
+      deletes = cast.deletes.flatMap(function)
+    )
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+    val newOutput = output.update(cooked, inserted, deleted)
+    Response(Some(new Expand(id, function, newOutput)), inserted, deleted)
+  }
 }
 
 
@@ -201,17 +235,13 @@ private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
 }
 
 
-private class Join(id: Int, left: Side, right: Side)
-  extends Node(id) with Reset
-{
-  def reset() = new Join(id, left.reset(), right.reset())
-
+private class Multiply(id: Int, left: Multiplicand, right: Multiplicand) extends Node(id) {
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
     val newTarget = target.update(cast, other, inserted, deleted)
-    val repl = if (newTarget eq target) None else Some(new Join(
+    val repl = if (newTarget eq target) None else Some(new Multiply(
       id = id,
       left = if (isLeftSide) newTarget else left,
       right = if (isLeftSide) right else newTarget
@@ -221,32 +251,25 @@ private class Join(id: Int, left: Side, right: Side)
 }
 
 
-private class Tranform(id: Int, function: Row => Row) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
-    replacement = None,
-    inserts = cast.inserts.map(function),
-    deletes = cast.deletes.map(function)
-  )
-}
-
-
-/** Represents a View in a database. It is essentially just a multiset of rows.
-  * If you add a row to a Sink multiple times, then you have to remove it the
-  * same number of times to really get it out of there. */
-private class Sink(id: Int, val rows: RowCounter) extends Node(id) with Reset {
-  def reset() = new Sink(id, rows.reset())
-
-  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+private class Transform(
+  id: Int,
+  function: Row => Row,
+  output: RowCounter = RowCounter()
+) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean) = {
+    val cooked = cast.copy(
+      inserts = cast.inserts.map(function),
+      deletes = cast.deletes.map(function)
+    )
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newRows = rows.update(cast, inserted, deleted)
-    val repl = if (newRows eq rows) None else Some(new Sink(id, newRows))
-    Response(repl, inserted, deleted)
+    val newOutput = output.update(cooked, inserted, deleted)
+    Response(Some(new Transform(id, function, newOutput)), inserted, deleted)
   }
 }
 
 
-/** Represents a Table in a database. It is essentially just a set of rows. */
+/** Represents a Table or a View in a database. It is just a set of rows. */
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val inserted = cast.inserts.filter(x => !rows(x))
@@ -258,110 +281,17 @@ private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
 }
 
 
-case class Side(
-  on: Vector[Int],
-  merge: Vector[Int],
-  rows: RowCounter = RowCounter(),
-  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
-{
-  def reset() = Side(on, merge, rows.reset(), groups)
-  def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
-
-  def update(
-    cast: Broadcast,
-    otherGroup: Side,
-    inserted: ArrayBuffer[Row],
-    deleted: ArrayBuffer[Row]
-  ): Side = {
-    // Update our row-counter with our new rows.
-    val tmpInserted = ArrayBuffer[Row]()
-    val tmpDeleted = ArrayBuffer[Row]()
-    val newRows = rows.update(cast, tmpInserted, tmpDeleted)
-
-    // If the row-counter didn't change, then we won't change either. Exit early.
-    if (newRows eq rows) {
-      return this
+private class Subtract(id: Int, pos: PositiveSide, neg: NegativeSide) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+    val repl = if (isLeftSide) {
+      val newPos = pos.update(cast, neg, inserted, deleted)
+      if (newPos eq pos) None else Some(new Subtract(id, newPos, neg))
+    } else {
+      val newNeg = neg.update(cast, pos, inserted, deleted)
+      if (newNeg eq neg) None else Some(new Subtract(id, pos, newNeg))
     }
-
-    var newGroups = groups
-    for (row <- tmpInserted) {
-      val key = on.map { i => row(i) }
-      if (newGroups.contains(key)) {
-        newGroups += (key -> (newGroups(key) + row))
-      } else {
-        newGroups += (key -> Set(row))
-      }
-      for (other <- otherGroup(key)) {
-        val paired = row ++ other
-        inserted += merge.map { i => paired(i) }
-      }
-    }
-
-    for (row <- tmpDeleted) {
-      val key = on.map { i => row(i) }
-      val group = newGroups(key) - row
-      if (group.size > 0) {
-        newGroups += (key -> group)
-      } else {
-        newGroups -= key
-      }
-      for (other <- otherGroup(key)) {
-        val paired = row ++ other
-        deleted += merge.map { i => paired(i) }
-      }
-    }
-
-    return Side(on, merge, newRows, newGroups)
-  }
-}
-
-
-case class RowCounter(
-  rows: Map[Row, Int] = Map[Row, Int](),
-  visited: Set[Row] = Set[Row]()
-) {
-  def toSet: Set[Row] = rows.keySet
-  def reset() = if (visited.isEmpty) this else RowCounter(rows, Set())
-
-  def update(cast: Broadcast, inserted: ArrayBuffer[Row], deleted: ArrayBuffer[Row]) = {
-    var newRows = rows
-    var newVisited = visited
-
-    for (row <- cast.inserts) {
-      // Ignore this row if we've already seen it.
-      if (!newVisited(row)) {
-        // Record that we've now visited this row.
-        newVisited += row
-        // Increment this row's count.
-        val prev = newRows.getOrElse(row, 0)
-        newRows += (row -> (prev + 1))
-        // If the previous count was zero, then record that we inserted this row
-        // by adding it to the "inserted" output buffer.
-        if (prev == 0) {
-          inserted += row
-        }
-      }
-    }
-
-    for (row <- cast.deletes) {
-      // As above, ignore this row if we've already seen it.
-      if (!newVisited(row)) {
-        // Record that we've now visited this row.
-        newVisited += row
-        val prev = newRows.getOrElse(row, 0)
-        // If this row's count was 1, then delete it from the table.
-        // (And add it to the "deleted" output buffer.)
-        if (prev == 1) {
-          newRows -= row
-          deleted += row
-        } else if (prev > 0) {
-          // If the count is positive (basically, not 0), then decrement it.
-          newRows += (row -> (prev - 1))
-        }
-      }
-    }
-
-    // If we didn't visit any new rows, then we know that nothing changed.
-    if (newVisited eq visited) this else RowCounter(newRows, newVisited)
+    Response(repl, inserted, deleted)
   }
 }

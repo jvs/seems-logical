@@ -42,12 +42,12 @@ object DslTests extends TestSuite { val tests = Tests {
   val snap1 = start.insert(Foo.Likes, 1, 2, 3, 4, 5, 6)
   val snap2 = snap1.remove(Foo.Likes, 3, 4)
   assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Foo.Friends) == Set(
     R(1, 2), R(2, 1),
     R(3, 4), R(4, 3),
     R(5, 6), R(6, 5)
   ))
-  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap2(Foo.Friends) == Set(
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
@@ -64,12 +64,12 @@ object DslTests extends TestSuite { val tests = Tests {
   val snap1 = start.insert(Foo.Likes, 1, 2, 3, 4, 5, 6)
   val snap2 = snap1.remove(Foo.Likes, 3, 4)
   assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Foo.Friends) == Set(
     R(1, 2), R(2, 1),
     R(3, 4), R(4, 3),
     R(5, 6), R(6, 5)
   ))
-  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap2(Foo.Friends) == Set(
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
@@ -295,5 +295,64 @@ object DslTests extends TestSuite { val tests = Tests {
     R(5, 6), R(5, 7), R(5, 8)
   ))
   assert(snap2(Foo.Baz) == Set(R(1, 2), R(1, 3), R(1, 4)))
+}
+
+"Try using simple subtraction." - {
+  object Z extends Schema {
+    val Flights = Table("airline", "from", "to")
+    val Reaches: View = View("airline", "from", "to") {
+      Flights("airline", "from", "to") or (
+        Reaches("airline", "from", "layover") and
+        Reaches("airline", "layover", "to")
+      )
+    }
+    val Other = View("airline", "from", "to") {
+      Reaches("airline", "from", "to") where {
+        rec => rec[String]("airline") != "UA"
+      }
+    }
+    val OnlyUA = View("airline", "from", "to") {
+      Reaches("airline", "from", "to") butNot
+      Other("some-other-airline", "from", "to")
+    }
+  }
+  val snap1 = Z.create().insert(
+    Z.Flights,
+    "UA", "SF", "DEN",
+    "AA", "SF", "DAL",
+    "UA", "DEN", "CHI",
+    "UA", "DEN", "DAL",
+    "AA", "DAL", "CHI",
+    "AA", "DAL", "NY",
+    "AA", "CHI", "NY",
+    "UA", "CHI", "NY"
+  )
+  // val snap2 = snap1.insert(Z.Flights, "UA", "NY", "BOS")
+  // val snap3 = snap2.insert(Z.Flights, "AA", "NY", "BOS")
+  // val snap4 = snap3.remove(Z.Flights, "AA", "CHI", "NY")
+
+  assert(snap1(Z.Reaches) == Set(
+    R("AA", "CHI", "NY"),
+    R("AA", "DAL", "CHI"),
+    R("AA", "DAL", "NY"),
+    R("AA", "SF", "CHI"),
+    R("AA", "SF", "DAL"),
+    R("AA", "SF", "NY"),
+    R("UA", "CHI", "NY"),
+    R("UA", "DEN", "CHI"),
+    R("UA", "DEN", "DAL"),
+    R("UA", "DEN", "NY"),
+    R("UA", "SF", "CHI"),
+    R("UA", "SF", "DAL"),
+    R("UA", "SF", "DEN"),
+    R("UA", "SF", "NY")
+  ))
+
+  assert(snap1(Z.OnlyUA) == Set(
+    R("UA", "DEN", "CHI"),
+    R("UA", "DEN", "DAL"),
+    R("UA", "DEN", "NY"),
+    R("UA", "SF", "DEN")
+  ))
 }
 }}
