@@ -13,7 +13,16 @@ case class Summand(on: Vector[Int], rows: Set[Row] = Set[Row]()) {
   ): Summand = {
     var newRows = rows
     for (raw <- cast.inserts) {
+      // MUST: Perform the swizzle in a separate transform node. Doing it here
+      // causes us to miss necessary reference counts.
       val row = on.map { i => raw(i) }
+
+      // MUST: Enable this check. (And below, check that every delete operation
+      // is deleting a row that we really have in here.)
+      // if (newRows(row)) {
+      //   throw new RuntimeException(s"Internal error. Unexpected row: $row, from $raw")
+      // }
+
       if (!newRows(row) && (!isRecursive || !otherSide.rows(row))) {
         newRows += row
         if (!otherSide.rows(row)) {
