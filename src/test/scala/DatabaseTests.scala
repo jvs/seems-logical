@@ -352,9 +352,9 @@ object DslTests extends TestSuite { val tests = Tests {
     "AA", "CHI", "NY",
     "UA", "CHI", "NY"
   )
-  // val snap2 = snap1.insert(Z.Flights, "UA", "NY", "BOS")
-  // val snap3 = snap2.insert(Z.Flights, "AA", "NY", "BOS")
-  // val snap4 = snap3.remove(Z.Flights, "AA", "CHI", "NY")
+  val snap2 = snap1.insert(Z.Flights, "UA", "NY", "BOS")
+  val snap3 = snap2.insert(Z.Flights, "AA", "NY", "BOS")
+  val snap4 = snap3.remove(Z.Flights, "AA", "CHI", "NY")
 
   assert(snap1(Z.Reaches) == Set(
     R("AA", "CHI", "NY"),
@@ -378,6 +378,31 @@ object DslTests extends TestSuite { val tests = Tests {
     R("UA", "DEN", "DAL"),
     R("UA", "DEN", "NY"),
     R("UA", "SF", "DEN")
+  ))
+
+  assert(snap2(Z.Reaches) == snap1(Z.Reaches) ++ Set(
+    R("UA", "NY", "BOS"),
+    R("UA", "SF", "BOS"),
+    R("UA", "CHI", "BOS"),
+    R("UA", "DEN", "BOS")
+  ))
+
+  assert(snap2(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
+    R("UA", "NY", "BOS"),
+    R("UA", "SF", "BOS"),
+    R("UA", "CHI", "BOS"),
+    R("UA", "DEN", "BOS")
+  ))
+
+  assert(snap3(Z.Reaches) == snap2(Z.Reaches) ++ Set(
+    R("AA", "NY", "BOS"),
+    R("AA", "CHI", "BOS"),
+    R("AA", "DAL", "BOS"),
+    R("AA", "SF", "BOS")
+  ))
+
+  assert(snap3(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
+    R("UA", "DEN", "BOS")
   ))
 }
 }}
