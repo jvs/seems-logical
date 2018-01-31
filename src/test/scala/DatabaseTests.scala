@@ -522,4 +522,44 @@ val tests = Tests {
   assert(snap3a(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
   assert(snap3b(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
 }
+
+"Try making a row recursively reach a view after the row's first transaction" - {
+  object Z extends Schema {
+    val Root = Table("x")
+    val Lock = Table("x")
+    val Catch: View = View("x") {
+      Root("x") or (Catch("x") and Lock("x"))
+    }
+  }
+  val snap1 = Z.create().insert(Z.Root, 1, 2, 3)
+  val snap2 = snap1.insert(Z.Lock, 2, 3)
+  val snap3a = snap2.remove(Z.Root, 2)
+  val snap3b = snap2.remove(Z.Lock, 2)
+
+  // The point is that when "2" is removed from the "Root" table in "step3a",
+  // it should also be removed from the "Catch" view. But this row doesn't look
+  // obviously recusive to the "Catch" view, since it doesn't arrive multiple
+  // times in the same transaction.
+
+  assertConsistent(Z, snap1)
+  assertConsistent(Z, snap2)
+  assertConsistent(Z, snap3a)
+  assertConsistent(Z, snap3b)
+
+  assert(snap1(Z.Root) == Set(R(1), R(2), R(3)))
+  assert(snap1(Z.Lock) == Set())
+  assert(snap1(Z.Catch) == Set(R(1), R(2), R(3)))
+
+  assert(snap2(Z.Root) == Set(R(1), R(2), R(3)))
+  assert(snap2(Z.Lock) == Set(R(2), R(3)))
+  assert(snap2(Z.Catch) == Set(R(1), R(2), R(3)))
+
+  assert(snap3a(Z.Root) == Set(R(1), R(3)))
+  assert(snap3a(Z.Lock) == Set(R(2), R(3)))
+  assert(snap3a(Z.Catch) == Set(R(1), R(3)))
+
+  assert(snap3b(Z.Root) == Set(R(1), R(2), R(3)))
+  assert(snap3b(Z.Lock) == Set(R(3)))
+  assert(snap3b(Z.Catch) == Set(R(1), R(2), R(3)))
+}
 }}
