@@ -102,6 +102,21 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap3(Foo.Fiz) == Set(R(1, 2, 3), R(3, 4, 5)))
 }
 
+"Try a simple view that drops a column and introduces duplicates." - {
+  object Z extends Schema {
+    val Foo = Table("x", "y", "z")
+    val Bar = View("x", "y") requires { Foo("x", "y", "z") }
+  }
+  val snap1 = Z.create().insert(Z.Foo, 1, 2, 3, 1, 2, 4, 2, 3, 4)
+  val snap2 = snap1.remove(Z.Foo, 1, 2, 4)
+  val snap3 = snap2.remove(Z.Foo, 1, 2, 3)
+  val snap4 = snap3.insert(Z.Foo, 2, 3, 5).remove(Z.Foo, 2, 3, 4, 2, 3, 5)
+  assert(snap1(Z.Bar) == Set(R(1, 2), R(2, 3)))
+  assert(snap2(Z.Bar) == Set(R(1, 2), R(2, 3)))
+  assert(snap3(Z.Bar) == Set(R(2, 3)))
+  assert(snap4(Z.Bar) == Set())
+}
+
 "Try a simple ancestor relation." - {
   object Family extends Schema {
     val Father = Table("father", "child")
