@@ -272,6 +272,30 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
 }
 
+"Try using a transform that recursively generates many rows" - {
+  object Foo extends Schema {
+    val Bar = Table("x")
+    val Baz: View = View("x") requires {
+      Bar("x") or (Baz("x") changing { rec =>
+        val x = rec[Int]("x")
+        if (x <= 0) rec else Record("x" -> (x - 1))
+      })
+    }
+  }
+  val start = Foo.create()
+  val snap1 = start.insert(Foo.Bar, 10)
+  val snap2 = snap1.insert(Foo.Bar, 9)
+  val snap3 = snap2.remove(Foo.Bar, 10)
+  val snap4 = snap2.remove(Foo.Bar, 9)
+  val snap5 = snap2.remove(Foo.Bar, 10, 9)
+  assert(snap1(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap2(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap3(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(i => R(i)))
+  assert(snap4(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  // This is broken:
+  // assert(snap5(Foo.Baz) == Set())
+}
+
 "Try using a simple expansion." - {
   object Foo extends Schema {
     val Bar = Table("x", "y", "z", "w")

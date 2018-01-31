@@ -3,7 +3,7 @@ package seems.logical
 import scala.collection.mutable.ArrayBuffer
 
 
-case class Summand(on: Vector[Int], rows: Set[Row] = Set[Row]()) {
+case class Summand(rows: Set[Row] = Set[Row](), recurring: Set[Row] = Set[Row]()) {
   def update(
     cast: Broadcast,
     otherSide: Summand,
@@ -12,35 +12,38 @@ case class Summand(on: Vector[Int], rows: Set[Row] = Set[Row]()) {
     deleted: ArrayBuffer[Row]
   ): Summand = {
     var newRows = rows
-    for (raw <- cast.inserts) {
-      // MUST: Perform the swizzle in a separate transform node. Doing it here
-      // causes us to miss necessary reference counts.
-      val row = on.map { i => raw(i) }
+    var newRecurring = recurring
+    for (row <- cast.inserts) {
+      if (newRows(row) || newRecurring(row)) {
+        throw new RuntimeException(s"Internal error. Received duplicate row: $row")
+      }
 
-      // MUST: Enable this check. (And below, check that every delete operation
-      // is deleting a row that we really have in here.)
-      // if (newRows(row)) {
-      //   throw new RuntimeException(s"Internal error. Unexpected row: $row, from $raw")
-      // }
-
-      if (!newRows(row) && (!isRecursive || !otherSide.rows(row))) {
+      val isShared = otherSide.rows(row)
+      if (isRecursive && isShared) {
+        newRecurring += row
+      } else {
         newRows += row
-        if (!otherSide.rows(row)) {
+        if (!isShared) {
           inserted += row
         }
       }
     }
 
-    for (raw <- cast.deletes) {
-      val row = on.map { i => raw(i) }
+    for (row <- cast.deletes) {
       if (newRows(row)) {
         newRows -= row
         if (!otherSide.rows(row)) {
           deleted += row
         }
+      } else if (newRecurring(row)) {
+        // MUST: Speculatively delete!
+        newRecurring -= row
+      } else {
+        throw new RuntimeException(s"Internal error. Received unexpected row: $row")
       }
     }
-    if (newRows eq rows) this else Summand(on, newRows)
+
+    Summand(newRows, newRecurring)
   }
 }
 
@@ -171,37 +174,56 @@ case class Multiplicand(
 }
 
 
-case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()){
+case class RowCounter(
+  rows: Map[Row, Int] = Map[Row, Int](),
+  recurring: Map[Row, Int] = Map[Row, Int]())
+{
   def contains(row: Row) = rows.contains(row)
   def toSet: Set[Row] = rows.keySet
 
-  def update(cast: Broadcast, inserted: ArrayBuffer[Row], deleted: ArrayBuffer[Row]) = {
+  def update(
+    cast: Broadcast,
+    isRecursive: Boolean,
+    inserted: ArrayBuffer[Row],
+    deleted: ArrayBuffer[Row]
+  ) = {
+    var newRecurring = recurring
     var newRows = rows
 
     for (row <- cast.inserts) {
-      // Increment this row's count.
       val prev = newRows.getOrElse(row, 0)
-      newRows += (row -> (prev + 1))
-      // If the previous count was zero, then record that we inserted this row
-      // by adding it to the "inserted" output buffer.
-      if (prev == 0) {
-        inserted += row
+      if (isRecursive && prev > 0) {
+        val prevRec = newRecurring.getOrElse(row, 0)
+        newRecurring += (row -> (prevRec + 1))
+      } else {
+        // Increment this row's count.
+        newRows += (row -> (prev + 1))
+
+        // If the previous count was zero, then record that we inserted this row
+        // by adding it to the "inserted" output buffer.
+        if (prev == 0) {
+          inserted += row
+        }
       }
     }
 
     for (row <- cast.deletes) {
-      val prev = newRows.getOrElse(row, 0)
-      // If this row's count was 1, then delete it from the table.
-      // (And add it to the "deleted" output buffer.)
-      if (prev == 1) {
-        newRows -= row
-        deleted += row
-      } else if (prev > 0) {
-        // If the count is positive (basically, not 0), then decrement it.
-        newRows += (row -> (prev - 1))
+      if (isRecursive && newRecurring.contains(row)) {
+        //
+      } else {
+        val prev = newRows.getOrElse(row, 0)
+        // If this row's count was 1, then delete it from the table.
+        // (And add it to the "deleted" output buffer.)
+        if (prev == 1) {
+          newRows -= row
+          deleted += row
+        } else if (prev > 0) {
+          // If the count is positive (basically, not 0), then decrement it.
+          newRows += (row -> (prev - 1))
+        }
       }
     }
 
-    RowCounter(newRows)
+    RowCounter(newRows, newRecurring)
   }
 }

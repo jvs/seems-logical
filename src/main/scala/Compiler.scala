@@ -51,13 +51,10 @@ private class Compiler {
   }
 
   private def add(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
-    val (s1, s2) = (left.schema, right.schema)
-    val schema = s1.filter { x => s2.contains(x) }
-    val keepleft = schema.map { x => s1.indexOf(x) }
-    val keepright = schema.map { x => s2.indexOf(x) }
-    val node = add(new Add(nextId, Summand(keepleft), Summand(keepright)))
-    connect(left.node, node, isLeftSide = true)
-    connect(right.node, node, isLeftSide = false)
+    val schema = left.schema.filter { x => right.schema.contains(x) }
+    val node = add(new Add(nextId, Summand(), Summand()))
+    connectNodes(left.node, node, left.schema, schema, isLeftSide = true)
+    connectNodes(right.node, node, right.schema, schema, isLeftSide = false)
     CompiledTerm(node, schema)
   }
 
@@ -150,20 +147,28 @@ private class Compiler {
   }
 
   private def connectView(term: CompiledTerm, viewNode: Node, schema: Vector[String]) = {
-    val (src, dst) = (term.schema, schema)
+    connectNodes(term.node, viewNode, term.schema, schema)
+  }
 
-    val missing = dst.toSet -- src.toSet
-    if (missing.size > 0) {
-      throw new SchemaError(s"Cannot connect schema $src to $dst.")
+  private def connectNodes(
+    left: Node,
+    right: Node,
+    srcSchema: Vector[String],
+    dstSchema: Vector[String],
+    isLeftSide: Boolean = true
+  ): Unit = {
+    val missing = dstSchema.toSet -- srcSchema.toSet
+    if (missing.nonEmpty) {
+      throw new SchemaError(s"Cannot connect schema $srcSchema to $dstSchema.")
     }
 
-    if (src == dst) {
-      connect(term.node, viewNode)
+    if (srcSchema == dstSchema) {
+      connect(left, right, isLeftSide)
     } else {
-      val cols = dst.map { x => src.indexOf(x) }
-      val swizzle = add(new Transform(nextId, row => cols.map { i => row(i) }))
-      connect(term.node, swizzle)
-      connect(swizzle, viewNode)
+      val cols = dstSchema.map { x => srcSchema.indexOf(x) }
+      val adapter = add(new Transform(nextId, row => cols.map { i => row(i) }))
+      connect(left, adapter)
+      connect(adapter, right, isLeftSide)
     }
   }
 
@@ -198,12 +203,12 @@ private class Add(id: Int, left: Summand, right: Summand) extends Node(id) {
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
     val newTarget = target.update(cast, other, isRecursive, inserted, deleted)
-    val repl = if (newTarget eq target) None else Some(new Add(
+    val repl = new Add(
       id = id,
       left = if (isLeftSide) newTarget else left,
       right = if (isLeftSide) right else newTarget
-    ))
-    Response(repl, inserted, deleted)
+    )
+    Response(Some(repl), inserted, deleted)
   }
 }
 
@@ -218,9 +223,10 @@ private class Expand(
       inserts = cast.inserts.flatMap(function),
       deletes = cast.deletes.flatMap(function)
     )
+    val isRecursive = cast.visited(id)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, inserted, deleted)
+    val newOutput = output.update(cooked, isRecursive, inserted, deleted)
     Response(Some(new Expand(id, function, newOutput)), inserted, deleted)
   }
 }
@@ -261,10 +267,12 @@ private class Transform(
       inserts = cast.inserts.map(function),
       deletes = cast.deletes.map(function)
     )
+    val isRecursive = cast.visited(id)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, inserted, deleted)
-    Response(Some(new Transform(id, function, newOutput)), inserted, deleted)
+    val newOutput = output.update(cooked, isRecursive, inserted, deleted)
+    val repl = new Transform(id, function, newOutput)
+    Response(Some(repl), inserted, deleted)
   }
 }
 
