@@ -117,6 +117,19 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap4(Z.Bar) == Set())
 }
 
+"Try a simple view that redundantly adds two tables." - {
+  object Z extends Schema {
+    val Foo = Table("x", "y")
+    val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
+  }
+  val snap1 = Z.create().insert(Z.Foo, 1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.remove(Z.Foo, 3, 4)
+  val snap3 = snap2.remove(Z.Foo, 1, 2, 5, 6)
+  assert(snap1(Z.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Z.Bar) == Set(R(1, 2), R(5, 6)))
+  assert(snap3(Z.Bar) == Set())
+}
+
 "Try a simple ancestor relation." - {
   object Family extends Schema {
     val Father = Table("father", "child")
