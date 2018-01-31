@@ -38,6 +38,14 @@ class Database(
     case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges)
     case None => this
   }
+
+  private [logical] def reset(): Database = {
+    val newNodes = nodes.foldLeft(nodes) {
+      case (acc, r: Reset) => acc.updated(r.id, r.reset())
+      case (acc, _) => acc
+    }
+    new Database(datasets, newNodes, edges)
+  }
 }
 
 
@@ -45,13 +53,17 @@ private abstract class Node(val id: Int) {
   def receive(cast: Broadcast, isLeftSide: Boolean): Response
 }
 
+private trait Reset {
+  val id: Int
+  def reset(): Node
+}
+
 private case class Edge(receiver: Int, isLeftSide: Boolean)
 
 private case class Broadcast(
   sender: Int,
   inserts: ArrayBuffer[Row],
-  deletes: ArrayBuffer[Row],
-  visited: Set[Int] = Set()
+  deletes: ArrayBuffer[Row]
 )
 
 private case class Response(
@@ -85,11 +97,10 @@ private object run {
         val resp = node.receive(broadcast, edge.isLeftSide)
         current = current.update(resp.replacement)
         if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes,
-            broadcast.visited + node.id)
+          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
         }
       }
     }
-    current
+    current.reset()
   }
 }

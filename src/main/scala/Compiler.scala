@@ -196,13 +196,14 @@ private class Compiler {
 private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
-private class Add(id: Int, left: Summand, right: Summand) extends Node(id) {
+private class Add(id: Int, val left: Summand, val right: Summand) extends Node(id) with Reset {
+  def reset() = new Add(id, left.reset(), right.reset())
+
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
-    val isRecursive = cast.visited(id)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newTarget = target.update(cast, other, isRecursive, inserted, deleted)
+    val newTarget = target.update(cast, other, inserted, deleted)
     val repl = new Add(
       id = id,
       left = if (isLeftSide) newTarget else left,
@@ -217,16 +218,17 @@ private class Expand(
   id: Int,
   function: Row => List[Row],
   output: RowCounter = RowCounter()
-) extends Node(id) {
+) extends Node(id) with Reset {
+  def reset() = new Expand(id, function, output.reset())
+
   def receive(cast: Broadcast, isLeftSide: Boolean) = {
     val cooked = cast.copy(
       inserts = cast.inserts.flatMap(function),
       deletes = cast.deletes.flatMap(function)
     )
-    val isRecursive = cast.visited(id)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, isRecursive, inserted, deleted)
+    val newOutput = output.update(cooked, inserted, deleted)
     Response(Some(new Expand(id, function, newOutput)), inserted, deleted)
   }
 }
@@ -261,16 +263,17 @@ private class Transform(
   id: Int,
   function: Row => Row,
   output: RowCounter = RowCounter()
-) extends Node(id) {
+) extends Node(id) with Reset {
+  def reset() = new Transform(id, function, output.reset())
+
   def receive(cast: Broadcast, isLeftSide: Boolean) = {
     val cooked = cast.copy(
       inserts = cast.inserts.map(function),
       deletes = cast.deletes.map(function)
     )
-    val isRecursive = cast.visited(id)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, isRecursive, inserted, deleted)
+    val newOutput = output.update(cooked, inserted, deleted)
     val repl = new Transform(id, function, newOutput)
     Response(Some(repl), inserted, deleted)
   }
