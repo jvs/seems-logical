@@ -23,7 +23,7 @@ case class Summand(rows: Set[Row] = Set[Row](), recent: Set[Row] = Set[Row]()) {
 
       // Did the other side see this row during the current transaction?
       if (!otherSide.recent(row)) {
-        // OK, so the other side didn't see this row durint this transaction.
+        // OK, so the other side didn't see this row during this transaction.
         // Add it to our sets.
         newRows += row
         newRecent += row
