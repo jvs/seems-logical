@@ -1,13 +1,39 @@
 package test.seems.logical
 
 import utest._
-import seems.logical.{Record, Row, Schema, View}
+import seems.logical.{Database, Record, Row, Schema, View}
 
 object R {
   def apply(items: Any*): Row = items.toVector
 }
 
-object DslTests extends TestSuite { val tests = Tests {
+object DslTests extends TestSuite {
+
+def rederive(s: Schema, db: Database): Database = {
+  var result = s.create()
+  for (table <- s.tableSet) {
+    for (row <- db(table)) {
+      result = result.insert(table, row:_*)
+    }
+  }
+  result
+}
+
+def assertSame(s: Schema, db1: Database, db2: Database) = {
+  for (table <- s.tableSet) {
+    assert(db1(table) == db2(table))
+  }
+  for (view <- s.viewSet) {
+    assert(db1(view) == db2(view))
+  }
+}
+
+def assertConsistent(s: Schema, db: Database) = {
+  assertSame(s, db, rederive(s, db))
+}
+
+
+val tests = Tests {
 
 "Make sure DSL seems to create the expected things." - {
   object SymbolTable extends Schema {
@@ -52,6 +78,8 @@ object DslTests extends TestSuite { val tests = Tests {
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
   ))
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
 }
 
 "Try the same simple view as before, only this time make it recursive." - {
@@ -74,6 +102,8 @@ object DslTests extends TestSuite { val tests = Tests {
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
   ))
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
 }
 
 "Try joining two simple tables." - {
@@ -100,6 +130,10 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap3(Foo.Bar) == Set(R(1, 2), R(3, 4)))
   assert(snap3(Foo.Baz) == Set(R(2, 3), R(4, 5), R(6, 7)))
   assert(snap3(Foo.Fiz) == Set(R(1, 2, 3), R(3, 4, 5)))
+
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
+  assertConsistent(Foo, snap3)
 }
 
 "Try a simple view that drops a column and introduces duplicates." - {
@@ -115,6 +149,10 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap2(Z.Bar) == Set(R(1, 2), R(2, 3)))
   assert(snap3(Z.Bar) == Set(R(2, 3)))
   assert(snap4(Z.Bar) == Set())
+  assertConsistent(Z, snap1)
+  assertConsistent(Z, snap2)
+  assertConsistent(Z, snap3)
+  assertConsistent(Z, snap4)
 }
 
 "Try a simple view that redundantly adds two tables." - {
@@ -128,6 +166,9 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap1(Z.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Z.Bar) == Set(R(1, 2), R(5, 6)))
   assert(snap3(Z.Bar) == Set())
+  assertConsistent(Z, snap1)
+  assertConsistent(Z, snap2)
+  assertConsistent(Z, snap3)
 }
 
 "Try a simple ancestor relation." - {
@@ -259,6 +300,11 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap4(Family.Parent) == snap2(Family.Parent))
   assert(snap4(Family.Ancestor) == snap2(Family.Ancestor))
   assert(snap4(Family.Siblings) == snap2(Family.Siblings))
+
+  assertConsistent(Family, snap1)
+  assertConsistent(Family, snap2)
+  assertConsistent(Family, snap3)
+  assertConsistent(Family, snap4)
 }
 
 "Try using a simple transform." - {
@@ -278,6 +324,8 @@ object DslTests extends TestSuite { val tests = Tests {
   val snap2 = snap1.remove(Foo.Bar, 3, 4)
   assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
 }
 
 "Try using a simple transform that changes the order of the fields." - {
@@ -298,6 +346,8 @@ object DslTests extends TestSuite { val tests = Tests {
   val snap2 = snap1.remove(Foo.Bar, 3, 4)
   assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
 }
 
 "Try using a transform that recursively generates many rows." - {
@@ -323,6 +373,13 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap4(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap5(Foo.Baz) == Set())
   assert(snap6(Foo.Baz) == Set())
+
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
+  assertConsistent(Foo, snap3)
+  assertConsistent(Foo, snap4)
+  assertConsistent(Foo, snap5)
+  assertConsistent(Foo, snap6)
 }
 
 "Try using a simple expansion." - {
@@ -348,6 +405,8 @@ object DslTests extends TestSuite { val tests = Tests {
     R(5, 6), R(5, 7), R(5, 8)
   ))
   assert(snap2(Foo.Baz) == Set(R(1, 2), R(1, 3), R(1, 4)))
+  assertConsistent(Foo, snap1)
+  assertConsistent(Foo, snap2)
 }
 
 "Try using simple subtraction." - {
@@ -383,6 +442,10 @@ object DslTests extends TestSuite { val tests = Tests {
   val snap2 = snap1.insert(Z.Flights, "UA", "NY", "BOS")
   val snap3 = snap2.insert(Z.Flights, "AA", "NY", "BOS")
   val snap4 = snap3.remove(Z.Flights, "AA", "CHI", "NY")
+  assertConsistent(Z, snap1)
+  assertConsistent(Z, snap2)
+  assertConsistent(Z, snap3)
+  assertConsistent(Z, snap4)
 
   assert(snap1(Z.Reaches) == Set(
     R("AA", "CHI", "NY"),
@@ -432,5 +495,31 @@ object DslTests extends TestSuite { val tests = Tests {
   assert(snap3(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
     R("UA", "DEN", "BOS")
   ))
+}
+
+"Try making the same row from two different tables reach the same view in the same transaction" - {
+  object Z extends Schema {
+    val Maybe1 = Table("id", "name")
+    val Maybe2 = Table("id", "name")
+    val Banned = Table("id", "name")
+    val Approved1 = View("id", "name") { Maybe1("id", "name") butNot Banned("id", "name") }
+    val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
+    val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
+  }
+  val snap1 = Z.create()
+    .insert(Z.Banned, 1, "A", 2, "B")
+    .insert(Z.Maybe1, 1, "A", 3, "C")
+    .insert(Z.Maybe2, 1, "A", 4, "D")
+  val snap2 = snap1.remove(Z.Banned, 1, "A")
+  val snap3a = snap2.remove(Z.Maybe1, 1, "A")
+  val snap3b = snap2.remove(Z.Maybe2, 1, "A")
+  assertConsistent(Z, snap1)
+  assertConsistent(Z, snap2)
+  assertConsistent(Z, snap3a)
+  assertConsistent(Z, snap3b)
+  assert(snap1(Z.Approved) == Set(R(3, "C"), R(4, "D")))
+  assert(snap2(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
+  assert(snap3a(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
+  assert(snap3b(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
 }
 }}
