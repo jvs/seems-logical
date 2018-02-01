@@ -367,6 +367,7 @@ val tests = Tests {
   val snap4 = snap2.remove(Foo.Bar, 9)
   val snap5 = snap2.remove(Foo.Bar, 10, 9)
   val snap6 = snap2.remove(Foo.Bar, 9, 10)
+
   assert(snap1(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap2(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap3(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(i => R(i)))

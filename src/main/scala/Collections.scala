@@ -3,50 +3,39 @@ package seems.logical
 import scala.collection.mutable.ArrayBuffer
 
 
-case class Summand(rows: Set[Row] = Set[Row](), recent: Set[Row] = Set[Row]()) {
-  def reset() = if (recent.isEmpty) this else Summand(rows, Set())
+case class Summand(rows: Set[Row] = Set[Row]()) {
+  def contains(row: Row) = rows(row)
 
   def update(
     cast: Broadcast,
     otherSide: Summand,
     inserted: ArrayBuffer[Row],
-    deleted: ArrayBuffer[Row]
+    deleted: ArrayBuffer[Row],
+    maybeDeleted: ArrayBuffer[Row]
   ): Summand = {
     var newRows = rows
-    var newRecent = recent
 
     for (row <- cast.inserts) {
-      // If we are receiving a duplicate row, then fail. Something is wrong.
+      // If we are receiving a duplicate row, then fail.
       if (newRows(row)) {
         throw new RuntimeException(s"Internal error. Received duplicate row: $row")
       }
-
-      // Did the other side see this row during the current transaction?
-      if (!otherSide.recent(row)) {
-        // OK, so the other side didn't see this row during this transaction.
-        // Add it to our sets.
-        newRows += row
-        newRecent += row
-
-        // Has other side ever seen this row at all? If not, then emit this row.
-        if (!otherSide.rows(row)) {
-          inserted += row
-        }
+      newRows += row
+      if (!otherSide.rows(row)) {
+        inserted += row
       }
     }
 
     for (row <- cast.deletes) {
-      newRecent -= row
-
-      if (newRows(row)) {
-        newRows -= row
-        if (!otherSide.rows(row)) {
-          deleted += row
-        }
+      newRows -= row
+      if (otherSide.rows(row)) {
+        maybeDeleted += row
+      } else {
+        deleted += row
       }
     }
 
-    Summand(newRows, newRecent)
+    Summand(newRows)
   }
 }
 
@@ -177,31 +166,26 @@ case class Multiplicand(
 }
 
 
-case class RowCounter(
-  rows: Map[Row, Int] = Map[Row, Int](),
-  recent: Set[Row] = Set[Row]())
-{
+case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
   def contains(row: Row) = rows.contains(row)
   def toSet: Set[Row] = rows.keySet
-  def reset() = if (recent.isEmpty) this else RowCounter(rows, Set())
 
-  def update(cast: Broadcast, inserted: ArrayBuffer[Row], deleted: ArrayBuffer[Row]) = {
+  def update(
+    cast: Broadcast,
+    inserted: ArrayBuffer[Row],
+    deleted: ArrayBuffer[Row],
+    maybeDeleted: ArrayBuffer[Row]
+  ) = {
     var newRows = rows
-    var newRecent = recent
 
     for (row <- cast.inserts) {
-      // Ignore this row if we've already seen it during the current commit.
-      if (!newRecent(row)) {
-        // Add this row to our "recent" set.
-        newRecent += row
-        // Increment this row's count.
-        val prev = newRows.getOrElse(row, 0)
-        newRows += (row -> (prev + 1))
-        // If the previous count was zero, then record that we inserted this row
-        // by adding it to the "inserted" output buffer.
-        if (prev == 0) {
-          inserted += row
-        }
+      val prev = newRows.getOrElse(row, 0)
+      newRows += (row -> (prev + 1))
+
+      // If the previous count was zero, then record that we inserted this row
+      // by adding it to the "inserted" output buffer.
+      if (prev == 0) {
+        inserted += row
       }
     }
 
@@ -215,9 +199,10 @@ case class RowCounter(
       } else if (prev > 0) {
         // If the count is positive (basically, not 0), then decrement it.
         newRows += (row -> (prev - 1))
+        maybeDeleted += row
       }
     }
 
-    RowCounter(newRows, newRecent)
+    RowCounter(newRows)
   }
 }

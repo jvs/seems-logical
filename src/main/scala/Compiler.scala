@@ -196,20 +196,21 @@ private class Compiler {
 private case class CompiledTerm(node: Node, schema: Vector[String])
 
 
-private class Add(id: Int, val left: Summand, val right: Summand) extends Node(id) with Reset {
-  def reset() = new Add(id, left.reset(), right.reset())
+private class Add(id: Int, val left: Summand, val right: Summand) extends Node(id) {
+  def contains(row: Row) = left.contains(row) || right.contains(row)
 
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newTarget = target.update(cast, other, inserted, deleted)
+    val maybeDeleted = ArrayBuffer[Row]()
+    val newTarget = target.update(cast, other, inserted, deleted, maybeDeleted)
     val repl = new Add(
       id = id,
       left = if (isLeftSide) newTarget else left,
       right = if (isLeftSide) right else newTarget
     )
-    Response(Some(repl), inserted, deleted)
+    Response(Some(repl), inserted, deleted, maybeDeleted)
   }
 }
 
@@ -218,8 +219,8 @@ private class Expand(
   id: Int,
   function: Row => List[Row],
   output: RowCounter = RowCounter()
-) extends Node(id) with Reset {
-  def reset() = new Expand(id, function, output.reset())
+) extends Node(id) {
+  def contains(row: Row) = output.contains(row)
 
   def receive(cast: Broadcast, isLeftSide: Boolean) = {
     val cooked = cast.copy(
@@ -228,8 +229,9 @@ private class Expand(
     )
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, inserted, deleted)
-    Response(Some(new Expand(id, function, newOutput)), inserted, deleted)
+    val maybeDeleted = ArrayBuffer[Row]()
+    val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
+    Response(Some(new Expand(id, function, newOutput)), inserted, deleted, maybeDeleted)
   }
 }
 
@@ -263,8 +265,8 @@ private class Transform(
   id: Int,
   function: Row => Row,
   output: RowCounter = RowCounter()
-) extends Node(id) with Reset {
-  def reset() = new Transform(id, function, output.reset())
+) extends Node(id) {
+  def contains(row: Row) = output.contains(row)
 
   def receive(cast: Broadcast, isLeftSide: Boolean) = {
     val cooked = cast.copy(
@@ -273,9 +275,10 @@ private class Transform(
     )
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val newOutput = output.update(cooked, inserted, deleted)
+    val maybeDeleted = ArrayBuffer[Row]()
+    val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
     val repl = new Transform(id, function, newOutput)
-    Response(Some(repl), inserted, deleted)
+    Response(Some(repl), inserted, deleted, maybeDeleted)
   }
 }
 
