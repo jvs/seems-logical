@@ -496,6 +496,16 @@ val tests = Tests {
   assert(snap3(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
     R("UA", "DEN", "BOS")
   ))
+
+  assert(snap4(Z.Reaches) == snap3(Z.Reaches) -- Set(
+    R("AA", "CHI", "NY"),
+    R("AA", "CHI", "BOS")
+  ))
+
+  assert(snap4(Z.OnlyUA) == snap3(Z.OnlyUA) ++ Set(
+    R("UA", "CHI", "NY"),
+    R("UA", "CHI", "BOS")
+  ))
 }
 
 "Try making the same row from two different tables reach the same view in the same transaction" - {
