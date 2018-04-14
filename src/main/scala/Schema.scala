@@ -16,7 +16,7 @@ trait Schema {
   def tableSet = tables.toSet
   def viewSet = views.toSet
 
-  /** Start creating a SQL-like statement. Call it's "from" method to get a
+  /** Start creating a SQL-like statement. Call its "from" method to get a
     * Statement object. A statement object can be used as a term within the
     * defintion of a view. */
   case class select(columns: Column*) {
