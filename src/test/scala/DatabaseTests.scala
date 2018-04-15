@@ -13,7 +13,7 @@ def rederive(s: Schema, db: Database): Database = {
   var result = s.create()
   for (table <- s.tableSet) {
     for (row <- db(table)) {
-      result = result.insert(table, row:_*)
+      result = result.into(table).insert(row:_*)
     }
   }
   result
@@ -65,8 +65,8 @@ val tests = Tests {
     val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
   }
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Likes, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.remove(Foo.Likes, 3, 4)
+  val snap1 = start into Foo.Likes insert (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 from Foo.Likes remove (3, 4)
   assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Foo.Friends) == Set(
@@ -89,8 +89,8 @@ val tests = Tests {
   }
   // Everything is the same as before:
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Likes, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.remove(Foo.Likes, 3, 4)
+  val snap1 = start into Foo.Likes insert (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 from Foo.Likes remove (3, 4)
   assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Foo.Friends) == Set(
@@ -115,9 +115,12 @@ val tests = Tests {
     }
   }
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.insert(Foo.Baz, 2, 3, 6, 7)
-  val snap3 = snap2.remove(Foo.Bar, 5, 6).insert(Foo.Baz, 4, 5)
+  val snap1 = start into Foo.Bar insert (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 into Foo.Baz insert (2, 3, 6, 7)
+  val snap3 = (snap2
+    from Foo.Bar remove (5, 6)
+    into Foo.Baz insert (4, 5)
+  )
 
   assert(snap1(Foo.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap1(Foo.Baz) == Set())
@@ -141,10 +144,13 @@ val tests = Tests {
     val Foo = Table("x", "y", "z")
     val Bar = View("x", "y") requires { Foo("x", "y", "z") }
   }
-  val snap1 = Z.create().insert(Z.Foo, 1, 2, 3, 1, 2, 4, 2, 3, 4)
-  val snap2 = snap1.remove(Z.Foo, 1, 2, 4)
-  val snap3 = snap2.remove(Z.Foo, 1, 2, 3)
-  val snap4 = snap3.insert(Z.Foo, 2, 3, 5).remove(Z.Foo, 2, 3, 4, 2, 3, 5)
+  val snap1 = Z.create().into(Z.Foo).insert(1, 2, 3, 1, 2, 4, 2, 3, 4)
+  val snap2 = snap1 from Z.Foo remove (1, 2, 4)
+  val snap3 = snap2 from Z.Foo remove (1, 2, 3)
+  val snap4 = (snap3
+    into Z.Foo insert (2, 3, 5)
+    from Z.Foo remove (2, 3, 4, 2, 3, 5)
+  )
   assert(snap1(Z.Bar) == Set(R(1, 2), R(2, 3)))
   assert(snap2(Z.Bar) == Set(R(1, 2), R(2, 3)))
   assert(snap3(Z.Bar) == Set(R(2, 3)))
@@ -160,9 +166,9 @@ val tests = Tests {
     val Foo = Table("x", "y")
     val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
   }
-  val snap1 = Z.create().insert(Z.Foo, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.remove(Z.Foo, 3, 4)
-  val snap3 = snap2.remove(Z.Foo, 1, 2, 5, 6)
+  val snap1 = Z.create().into(Z.Foo).insert(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 from Z.Foo remove (3, 4)
+  val snap3 = snap2 from Z.Foo remove (1, 2, 5, 6)
   assert(snap1(Z.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Z.Bar) == Set(R(1, 2), R(5, 6)))
   assert(snap3(Z.Bar) == Set())
@@ -203,32 +209,34 @@ val tests = Tests {
     }
   }
 
-  val snap1 = Family.create()
-    .insert(Family.Father,
+  val snap1 = (Family.create()
+    into Family.Father
+    insert (
       "Phillip", "Charles",
       "Charles", "William",
       "Charles", "Harry",
       "William", "George"
     )
-    .insert(Family.Mother,
+    into Family.Mother
+    insert (
       "Elizabeth II", "Charles",
       "Diana", "William",
       "Diana", "Harry",
       "Catherine", "George"
     )
-
-  val snap2 = snap1
-    .insert(Family.Father, "William", "Charlotte")
-    .insert(Family.Mother, "Catherine", "Charlotte")
-
-  val snap3 = snap2
-    .remove(Family.Father, "William", "Charlotte")
-    .remove(Family.Mother, "Catherine", "Charlotte")
-
-  val snap4 = snap3
-    .insert(Family.Father, "William", "Charlotte")
-    .insert(Family.Mother, "Catherine", "Charlotte")
-
+  )
+  val snap2 = (snap1
+    into Family.Father insert ("William", "Charlotte")
+    into Family.Mother insert ("Catherine", "Charlotte")
+  )
+  val snap3 = (snap2
+    from Family.Father remove ("William", "Charlotte")
+    from Family.Mother remove ("Catherine", "Charlotte")
+  )
+  val snap4 = (snap3
+    into Family.Father insert ("William", "Charlotte")
+    into Family.Mother insert ("Catherine", "Charlotte")
+  )
   assert(snap1(Family.Parent) == Set(
     R("Phillip", "Charles"),
     R("Charles", "William"),
@@ -320,8 +328,8 @@ val tests = Tests {
     }
   }
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.remove(Foo.Bar, 3, 4)
+  val snap1 = start.into(Foo.Bar).insert(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.from(Foo.Bar).remove(3, 4)
   assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
   assertConsistent(Foo, snap1)
@@ -342,8 +350,8 @@ val tests = Tests {
   }
   // The rest is the same as before.
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.remove(Foo.Bar, 3, 4)
+  val snap1 = start.into(Foo.Bar).insert(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.from(Foo.Bar).remove(3, 4)
   assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
   assertConsistent(Foo, snap1)
@@ -361,12 +369,12 @@ val tests = Tests {
     }
   }
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Bar, 10)
-  val snap2 = snap1.insert(Foo.Bar, 9)
-  val snap3 = snap2.remove(Foo.Bar, 10)
-  val snap4 = snap2.remove(Foo.Bar, 9)
-  val snap5 = snap2.remove(Foo.Bar, 10, 9)
-  val snap6 = snap2.remove(Foo.Bar, 9, 10)
+  val snap1 = start.into(Foo.Bar).insert(10)
+  val snap2 = snap1.into(Foo.Bar).insert(9)
+  val snap3 = snap2.from(Foo.Bar).remove(10)
+  val snap4 = snap2.from(Foo.Bar).remove(9)
+  val snap5 = snap2.from(Foo.Bar).remove(10, 9)
+  val snap6 = snap2.from(Foo.Bar).remove(9, 10)
 
   assert(snap1(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap2(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
@@ -399,8 +407,8 @@ val tests = Tests {
     }
   }
   val start = Foo.create()
-  val snap1 = start.insert(Foo.Bar, 1, 2, 3, 4, 5, 6, 7, 8)
-  val snap2 = snap1.remove(Foo.Bar, 5, 6, 7, 8)
+  val snap1 = start into Foo.Bar insert (1, 2, 3, 4, 5, 6, 7, 8)
+  val snap2 = snap1 from Foo.Bar remove (5, 6, 7, 8)
   assert(snap1(Foo.Baz) == Set(
     R(1, 2), R(1, 3), R(1, 4),
     R(5, 6), R(5, 7), R(5, 8)
@@ -429,8 +437,9 @@ val tests = Tests {
       Other("some-other-airline", "from", "to")
     }
   }
-  val snap1 = Z.create().insert(
-    Z.Flights,
+  val snap1 = Z.create()
+  .into(Z.Flights)
+  .insert(
     "UA", "SF", "DEN",
     "AA", "SF", "DAL",
     "UA", "DEN", "CHI",
@@ -440,9 +449,9 @@ val tests = Tests {
     "AA", "CHI", "NY",
     "UA", "CHI", "NY"
   )
-  val snap2 = snap1.insert(Z.Flights, "UA", "NY", "BOS")
-  val snap3 = snap2.insert(Z.Flights, "AA", "NY", "BOS")
-  val snap4 = snap3.remove(Z.Flights, "AA", "CHI", "NY")
+  val snap2 = snap1 into Z.Flights insert ("UA", "NY", "BOS")
+  val snap3 = snap2 into Z.Flights insert ("AA", "NY", "BOS")
+  val snap4 = snap3 from Z.Flights remove ("AA", "CHI", "NY")
   assertConsistent(Z, snap1)
   assertConsistent(Z, snap2)
   assertConsistent(Z, snap3)
@@ -517,13 +526,14 @@ val tests = Tests {
     val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
     val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
   }
-  val snap1 = Z.create()
-    .insert(Z.Banned, 1, "A", 2, "B")
-    .insert(Z.Maybe1, 1, "A", 3, "C")
-    .insert(Z.Maybe2, 1, "A", 4, "D")
-  val snap2 = snap1.remove(Z.Banned, 1, "A")
-  val snap3a = snap2.remove(Z.Maybe1, 1, "A")
-  val snap3b = snap2.remove(Z.Maybe2, 1, "A")
+  val snap1 = (Z.create()
+    into Z.Banned insert (1, "A", 2, "B")
+    into Z.Maybe1 insert (1, "A", 3, "C")
+    into Z.Maybe2 insert (1, "A", 4, "D")
+  )
+  val snap2 = snap1 from Z.Banned remove (1, "A")
+  val snap3a = snap2 from Z.Maybe1 remove (1, "A")
+  val snap3b = snap2 from Z.Maybe2 remove (1, "A")
   assertConsistent(Z, snap1)
   assertConsistent(Z, snap2)
   assertConsistent(Z, snap3a)
@@ -542,10 +552,10 @@ val tests = Tests {
       Root("x") or (Catch("x") and Lock("x"))
     }
   }
-  val snap1 = Z.create().insert(Z.Root, 1, 2, 3)
-  val snap2 = snap1.insert(Z.Lock, 2, 3)
-  val snap3a = snap2.remove(Z.Root, 2)
-  val snap3b = snap2.remove(Z.Lock, 2)
+  val snap1 = Z.create().into(Z.Root).insert(1, 2, 3)
+  val snap2 = snap1 into Z.Lock insert (2, 3)
+  val snap3a = snap2 from Z.Root remove 2
+  val snap3b = snap2 from Z.Lock remove 2
 
   // The point is that when "2" is removed from the "Root" table in "step3a",
   // it should also be removed from the "Catch" view. But this row doesn't look
