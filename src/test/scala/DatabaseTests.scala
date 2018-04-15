@@ -369,12 +369,12 @@ val tests = Tests {
     }
   }
   val start = Foo.create()
-  val snap1 = start.into(Foo.Bar).insert(10)
-  val snap2 = snap1.into(Foo.Bar).insert(9)
-  val snap3 = snap2.from(Foo.Bar).remove(10)
-  val snap4 = snap2.from(Foo.Bar).remove(9)
-  val snap5 = snap2.from(Foo.Bar).remove(10, 9)
-  val snap6 = snap2.from(Foo.Bar).remove(9, 10)
+  val snap1 = start into Foo.Bar insert 10
+  val snap2 = snap1 into Foo.Bar insert 9
+  val snap3 = snap2 from Foo.Bar remove 10
+  val snap4 = snap2 from Foo.Bar remove 9
+  val snap5 = snap2 from Foo.Bar remove (10, 9)
+  val snap6 = snap2 from Foo.Bar remove (9, 10)
 
   assert(snap1(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap2(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
@@ -437,17 +437,18 @@ val tests = Tests {
       Other("some-other-airline", "from", "to")
     }
   }
-  val snap1 = Z.create()
-  .into(Z.Flights)
-  .insert(
-    "UA", "SF", "DEN",
-    "AA", "SF", "DAL",
-    "UA", "DEN", "CHI",
-    "UA", "DEN", "DAL",
-    "AA", "DAL", "CHI",
-    "AA", "DAL", "NY",
-    "AA", "CHI", "NY",
-    "UA", "CHI", "NY"
+  val snap1 = (Z.create()
+    into Z.Flights
+    insert (
+      "UA", "SF", "DEN",
+      "AA", "SF", "DAL",
+      "UA", "DEN", "CHI",
+      "UA", "DEN", "DAL",
+      "AA", "DAL", "CHI",
+      "AA", "DAL", "NY",
+      "AA", "CHI", "NY",
+      "UA", "CHI", "NY"
+    )
   )
   val snap2 = snap1 into Z.Flights insert ("UA", "NY", "BOS")
   val snap3 = snap2 into Z.Flights insert ("AA", "NY", "BOS")
