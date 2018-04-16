@@ -23,7 +23,7 @@ class Database(
   }
 
   private def update(table: Table, rows: Vector[Any], isInsert: Boolean): Database = {
-    val expected = table.fields.length
+    val expected = table.schema.length
     if (rows.length % expected != 0) {
       throw new RuntimeException(
         s"Expected number of values to be divisible by ${expected}."

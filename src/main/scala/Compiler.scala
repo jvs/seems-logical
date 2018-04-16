@@ -23,24 +23,23 @@ private class Compiler {
   private def nextId = nodes.length
 
   private def compile(term: Term): CompiledTerm = term match {
-    case And(a, b) => multiply(compile(a), compile(b))
-    case ButNot(a, b) => subtract(compile(a), compile(b))
-    case Changing(term, func) => transform(compile(term), func)
-    case Expanding(term, schema, func) => expand(compile(term), schema, func)
-    case Or(a, b) => add(compile(a), compile(b))
-    case Project(term, fields) => project(compile(term), fields)
-    case Rename(term, fields) => CompiledTerm(compile(term).node, fields)
-    case Where(term, pred) => filter(compile(term), pred)
-
-    case t: Table => compile(t)
-    case s: Statement => compile(s)
-    case v: View => compile(v)
+    case x: And => compile(x)
+    case x: ButNot => compile(x)
+    case x: Changing => compile(x)
+    case x: Expanding => compile(x)
+    case x: Or => compile(x)
+    case x: Project => compile(x)
+    case x: Rename => compile(x)
+    case x: Statement => compile(x)
+    case x: Table => compile(x)
+    case x: View => compile(x)
+    case x: Where => compile(x)
   }
 
   private def compile(table: Table): CompiledTerm = {
     if (!datasets.contains(table)) {
       val node = register(new Source(nextId, Set()))
-      datasets += (table -> CompiledTerm(node, table.fields))
+      datasets += (table -> CompiledTerm(node, table.schema))
     }
     datasets(table)
   }
@@ -48,7 +47,7 @@ private class Compiler {
   private def compile(view: View): CompiledTerm = {
     if (!datasets.contains(view)) {
       val node = register(new Source(nextId, Set()))
-      val result = CompiledTerm(node, inferSchema(view))
+      val result = CompiledTerm(node, view.schema)
       datasets += (view -> result)
       val src = compile(view.body)
       if (src.schema != result.schema) {
@@ -61,26 +60,11 @@ private class Compiler {
     datasets(view)
   }
 
-  private def inferSchema(term: Term): Vector[String] = term match {
-    case t: Table => t.fields
-    case v: View => inferSchema(v.body)
-    case Expanding(_, s, _) => s
-    case Project(_, s) => s
-    case Rename(_, s) => s
-    case Where(t, _) => inferSchema(t)
-    case s: Statement if s.select == Vector(NamedColumn("*")) => inferSchema(s.from)
-    case s: Statement => s.select.map(_.name)
-    case _ => throw new SchemaError(
-      s"Schema inference is not implemented for $term"
-    )
-  }
-
   private def compile(stmt: Statement): CompiledTerm = {
-    val tmp = compile(stmt.from)
-    val src = stmt.predicate match {
-      case Some(p) => filter(tmp, p)
-      case None => tmp
-    }
+    val src = compile(stmt.predicate match {
+      case Some(p) => Where(stmt.from, p)
+      case None => stmt.from
+    })
 
     (stmt.select, stmt.groups) match {
       case (Vector(NamedColumn("*")), Vector()) => return src
@@ -92,17 +76,12 @@ private class Compiler {
         throw new SchemaError("Aggregate columns require a \"GROUP_BY\" expression.")
       }
       case (cols, Vector()) => {
-        val srcSchema = cols.map {
+        val projection = cols.map {
           case NamedColumn(a) => a
           case AliasColumn(a, _) => a.name
           case _ => throw new SchemaError("Expected non-aggregated columns.")
         }
-        val dstSchema = cols.map {
-          case NamedColumn(a) => a
-          case AliasColumn(_, a) => a
-          case _ => throw new SchemaError("Expected non-aggregated columns.")
-        }
-        return CompiledTerm(adaptSchema(src, srcSchema), dstSchema)
+        return CompiledTerm(adaptSchema(src, projection), stmt.schema)
       }
       case (cols, groups) => {
         throw new RuntimeException("WIP")
@@ -110,25 +89,24 @@ private class Compiler {
     }
   }
 
-  private def add(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
-    val schema = left.schema.filter { x => right.schema.contains(x) }
+  private def compile(term: Or): CompiledTerm = {
     val node = register(new Add(nextId, Summand(), Summand()))
+    val (left, right) = (compile(term.left), compile(term.right))
+    val schema = term.schema
     connect(adaptSchema(left, schema), node, isLeftSide = true)
     connect(adaptSchema(right, schema), node, isLeftSide = false)
     CompiledTerm(node, schema)
   }
 
-  private def expand(
-    left: CompiledTerm,
-    schema: Vector[String],
-    func: Record => List[Record]
-  ): CompiledTerm = {
-    val right = register(new Expand(nextId, wrapExpand(func, left.schema, schema)))
+  private def compile(term: Expanding): CompiledTerm = {
+    val left = compile(term.term)
+    val wrapped = restoreSchema(term.expand, left.schema, term.schema)
+    val right = register(new Expand(nextId, wrapped))
     connect(left.node, right)
-    CompiledTerm(right, schema)
+    CompiledTerm(right, term.schema)
   }
 
-  private def wrapExpand(
+  private def restoreSchema(
     func: Record => List[Record],
     inputSchema: Vector[String],
     outputSchema: Vector[String]
@@ -146,43 +124,22 @@ private class Compiler {
     }
   }
 
-  private def filter(left: CompiledTerm, pred: Record => Boolean): CompiledTerm = {
-    val right = register(new Filter(nextId, wrapPredicate(pred, left.schema)))
-    connect(left.node, right)
-    CompiledTerm(right, left.schema)
-  }
-
-  private def wrapPredicate(func: Record => Boolean, schema: Vector[String]): Row => Boolean = {
-    (row: Row) => func(new Record(row, schema))
-  }
-
-  private def transform(left: CompiledTerm, func: Record => Record): CompiledTerm = {
-    val right = register(new Transform(nextId, wrapTransform(func, left.schema)))
-    connect(left.node, right)
-    CompiledTerm(right, left.schema)
-  }
-
-  private def wrapTransform(func: Record => Record, schema: Vector[String]): Row => Row = {
-    (row: Row) => {
-      val result = func(new Record(row, schema))
-      if (result.schema == schema) {
-        result.row
-      } else {
-        val get = result.schema.zip(result.row).toMap
-        schema.map { x => get(x) }
-      }
-    }
-  }
-
-  private def multiply(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
+  private def compile(term: And): CompiledTerm = {
+    val schema = term.schema
+    val (left, right) = (compile(term.left), compile(term.right))
     val (s1, s2) = (left.schema, right.schema)
 
     val both = s1.filter { x => s2.contains(x) }
     val onleft = both.map { x => s1.indexOf(x) }
     val onright = both.map { x => s2.indexOf(x) }
     val rest = s2.filter { x => !both.contains(x) }
+
+    val received = s1 ++ rest
+    if (schema != received) {
+      throw new SchemaError(s"Inference error. Inferred $schema. Received $received")
+    }
+
     val restIndices = rest.map { x => s2.indexOf(x) }
-    val schema = s1 ++ rest
     val leftmerge = s1.zipWithIndex.map(_._2) ++ restIndices.map(_ + s1.length)
     val rightmerge = s1.zipWithIndex.map(_._2 + s2.length) ++ restIndices
 
@@ -195,11 +152,31 @@ private class Compiler {
     CompiledTerm(node, schema)
   }
 
-  private def project(term: CompiledTerm, schema: Vector[String]) = {
-    CompiledTerm(adaptSchema(term, schema), schema)
+  private def compile(term: Project): CompiledTerm = {
+    val src = compile(term.term)
+    val schema = term.schema
+    CompiledTerm(adaptSchema(src, schema), schema)
   }
 
-  private def subtract(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
+  private def compile(term: Rename): CompiledTerm = {
+    val src = compile(term.term)
+    if (src.schema == term.schema) src else CompiledTerm(src.node, term.schema)
+  }
+
+  private def compile(term: Where): CompiledTerm = {
+    val left = compile(term.term)
+    val wrapped = wrapPredicate(term.predicate, left.schema)
+    val right = register(new Filter(nextId, wrapped))
+    connect(left.node, right)
+    CompiledTerm(right, left.schema)
+  }
+
+  private def wrapPredicate(func: Record => Boolean, schema: Vector[String]): Row => Boolean = {
+    (row: Row) => func(new Record(row, schema))
+  }
+
+  private def compile(term: ButNot): CompiledTerm = {
+    val (left, right) = (compile(term.left), compile(term.right))
     val (s1, s2) = (left.schema, right.schema)
     val both = s1.filter { x => s2.contains(x) }
     val onleft = both.map { x => s1.indexOf(x) }
@@ -208,6 +185,26 @@ private class Compiler {
     connect(left.node, sub, isLeftSide = true)
     connect(right.node, sub, isLeftSide = false)
     CompiledTerm(sub, left.schema)
+  }
+
+  private def compile(term: Changing): CompiledTerm = {
+    val left = compile(term.term)
+    val wrapped = restoreSchema(term.transform, left.schema)
+    val right = register(new Transform(nextId, wrapped))
+    connect(left.node, right)
+    CompiledTerm(right, left.schema)
+  }
+
+  private def restoreSchema(func: Record => Record, schema: Vector[String]): Row => Row = {
+    (row: Row) => {
+      val result = func(new Record(row, schema))
+      if (result.schema == schema) {
+        result.row
+      } else {
+        val get = result.schema.zip(result.row).toMap
+        schema.map { x => get(x) }
+      }
+    }
   }
 
   private def adaptSchema(term: CompiledTerm, schema: Vector[String]): Node = {

@@ -26,17 +26,32 @@ package object logical {
     def expandingTo(schema: String*) = ExandBuilder(self, schema.toVector)
     def or(other: Term): Term = Or(this, other)
     def where(predicate: Record => Boolean): Term = Where(this, predicate)
+
+    val schema: Vector[String]
   }
 
   sealed trait Dataset extends Term
-  class Table(val fields: Vector[String]) extends Dataset
+
+  class Table(val schema: Vector[String]) extends Dataset
+
   class View(term: => Term) extends Dataset {
     def body: Term = term
+    lazy val schema = term.schema
   }
 
-  case class And(left: Term, right: Term) extends Term
-  case class ButNot(left: Term, right: Term) extends Term
-  case class Changing(term: Term, transform: Record => Record) extends Term
+  case class And(left: Term, right: Term) extends Term {
+    lazy val schema = {
+      left.schema ++ right.schema.filter { x => !left.schema.contains(x) }
+    }
+  }
+
+  case class ButNot(left: Term, right: Term) extends Term {
+    lazy val schema = left.schema
+  }
+
+  case class Changing(term: Term, transform: Record => Record) extends Term {
+    lazy val schema = term.schema
+  }
 
   case class Expanding(
     term: Term,
@@ -44,10 +59,16 @@ package object logical {
     expand: Record => List[Record]
   ) extends Term
 
-  case class Or(left: Term, right: Term) extends Term
-  case class Project(term: Term, fields: Vector[String]) extends Term
-  case class Rename(term: Term, fields: Vector[String]) extends Term
-  case class Where(term: Term, predicate: Record => Boolean) extends Term
+  case class Or(left: Term, right: Term) extends Term {
+    lazy val schema = left.schema.filter { x => right.schema.contains(x) }
+  }
+
+  case class Project(term: Term, schema: Vector[String]) extends Term
+  case class Rename(term: Term, schema: Vector[String]) extends Term
+
+  case class Where(term: Term, predicate: Record => Boolean) extends Term {
+    lazy val schema = term.schema
+  }
 
   case class Statement(
     select: Vector[Column],
@@ -62,6 +83,11 @@ package object logical {
         case Some(q) => (x => q(x) && p(x))
         case None => p
       }))
+    }
+
+    lazy val schema = select match {
+      case Vector(NamedColumn("*")) => from.schema
+      case cols => cols.map(_.name)
     }
   }
 

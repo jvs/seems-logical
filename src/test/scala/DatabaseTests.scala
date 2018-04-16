@@ -54,8 +54,9 @@ val tests = Tests {
     }
   }
 
-  assert(SymbolTable.Scope.fields == Vector("id"))
-  assert(SymbolTable.Binding.fields == Vector("name", "treeId", "scope"))
+  assert(SymbolTable.Scope.schema == Vector("id"))
+  assert(SymbolTable.Binding.schema == Vector("name", "treeId", "scope"))
+  assert(SymbolTable.NumBindings.schema == Vector("scope", "numBindings"))
 }
 
 "Try a simple view that just contains one 'or' operation." - {
