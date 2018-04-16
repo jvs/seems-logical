@@ -1,7 +1,7 @@
 package test.seems.logical
 
 import utest._
-import seems.logical.{Database, Record, Row, Schema, View}
+import seems.logical.{Database, LogicProgram, Record, Row, View}
 
 object R {
   def apply(items: Any*): Row = items.toVector
@@ -9,9 +9,9 @@ object R {
 
 object DslTests extends TestSuite {
 
-def rederive(s: Schema, db: Database): Database = {
-  var result = s.create()
-  for (table <- s.tableSet) {
+def rederive(p: LogicProgram, db: Database): Database = {
+  var result = p.create()
+  for (table <- p.tableSet) {
     for (row <- db(table)) {
       result = result.into(table).insert(row:_*)
     }
@@ -19,24 +19,24 @@ def rederive(s: Schema, db: Database): Database = {
   result
 }
 
-def assertSame(s: Schema, db1: Database, db2: Database) = {
-  for (table <- s.tableSet) {
+def assertSame(p: LogicProgram, db1: Database, db2: Database) = {
+  for (table <- p.tableSet) {
     assert(db1(table) == db2(table))
   }
-  for (view <- s.viewSet) {
+  for (view <- p.viewSet) {
     assert(db1(view) == db2(view))
   }
 }
 
-def assertConsistent(s: Schema, db: Database) = {
-  assertSame(s, db, rederive(s, db))
+def assertConsistent(p: LogicProgram, db: Database) = {
+  assertSame(p, db, rederive(p, db))
 }
 
 
 val tests = Tests {
 
 "Make sure DSL seems to create the expected things." - {
-  object SymbolTable extends Schema {
+  object SymbolTable extends LogicProgram {
     val Scope = Table("id")
     val Package = Table("path")
     val PackageScope = Table("package", "scope")
@@ -60,7 +60,7 @@ val tests = Tests {
 }
 
 "Try a simple view that just contains one 'or' operation." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Likes = Table("x", "y")
     val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
   }
@@ -83,7 +83,7 @@ val tests = Tests {
 }
 
 "Try the same simple view as before, only this time make it recursive." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Likes = Table("x", "y")
     val Friends: View = View("x", "y") { Likes("x", "y") or Friends("y", "x") }
   }
@@ -107,7 +107,7 @@ val tests = Tests {
 }
 
 "Try joining two simple tables." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Bar = Table("x", "y")
     val Baz = Table("z", "w")
     val Fiz = View("x", "yz", "w") requires {
@@ -140,7 +140,7 @@ val tests = Tests {
 }
 
 "Try a simple view that drops a column and introduces duplicates." - {
-  object Z extends Schema {
+  object Z extends LogicProgram {
     val Foo = Table("x", "y", "z")
     val Bar = View("x", "y") requires { Foo("x", "y", "z") }
   }
@@ -162,7 +162,7 @@ val tests = Tests {
 }
 
 "Try a simple view that redundantly adds two tables." - {
-  object Z extends Schema {
+  object Z extends LogicProgram {
     val Foo = Table("x", "y")
     val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
   }
@@ -178,7 +178,7 @@ val tests = Tests {
 }
 
 "Try a simple ancestor relation." - {
-  object Family extends Schema {
+  object Family extends LogicProgram {
     val Father = Table("father", "child")
     val Mother = Table("mother", "child")
 
@@ -316,7 +316,7 @@ val tests = Tests {
 }
 
 "Try using a simple transform." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Bar = Table("x", "y")
     val Baz = View("x", "y") requires {
       Bar("x", "y") changing {
@@ -337,7 +337,7 @@ val tests = Tests {
 }
 
 "Try using a simple transform that changes the order of the fields." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Bar = Table("x", "y")
     val Baz = View("x", "y") requires {
       Bar("x", "y") changing {
@@ -359,7 +359,7 @@ val tests = Tests {
 }
 
 "Try using a transform that recursively generates many rows." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Bar = Table("x")
     val Baz: View = View("x") requires {
       Bar("x") or (Baz("x") changing { rec =>
@@ -392,7 +392,7 @@ val tests = Tests {
 }
 
 "Try using a simple expansion." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val Bar = Table("x", "y", "z", "w")
     val Baz = View("x", "other") requires {
       Bar("x", "y", "z", "w") expandingTo ("x", "other") using {
@@ -419,7 +419,7 @@ val tests = Tests {
 }
 
 "Try using simple subtraction." - {
-  object Z extends Schema {
+  object Z extends LogicProgram {
     val Flights = Table("airline", "from", "to")
     val Reaches: View = View("airline", "from", "to") {
       Flights("airline", "from", "to") or (
@@ -519,7 +519,7 @@ val tests = Tests {
 }
 
 "Try making the same row from two different tables reach the same view in the same transaction" - {
-  object Z extends Schema {
+  object Z extends LogicProgram {
     val Maybe1 = Table("id", "name")
     val Maybe2 = Table("id", "name")
     val Banned = Table("id", "name")
@@ -546,7 +546,7 @@ val tests = Tests {
 }
 
 "Try making a row recursively reach a view after the row's first transaction" - {
-  object Z extends Schema {
+  object Z extends LogicProgram {
     val Root = Table("x")
     val Lock = Table("x")
     val Catch: View = View("x") {
@@ -586,7 +586,7 @@ val tests = Tests {
 }
 
 "Try a simple view that just renames two columns." - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val AB = Table("a", "b")
     val BA = View("b", "a") { AB("a", "b") }
   }
@@ -600,7 +600,7 @@ val tests = Tests {
 }
 
 "Try a simple SELECT statement that just selects everyting" - {
-  object Foo extends Schema {
+  object Foo extends LogicProgram {
     val ABC = Table("a", "b", "c")
     val CPY = View(SELECT ("*") FROM ABC)
   }
