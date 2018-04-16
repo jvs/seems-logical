@@ -8,6 +8,9 @@ class Database(
   private [logical] val nodes: Vector[Node],
   private [logical] val edges: Vector[Vector[Edge]])
 {
+  def datasetDefs = datasets.keySet
+  def tableDefs = datasets.keySet.collect { case x: Table => x }
+
   def apply(dataset: Dataset): Set[Row] = {
     nodes(datasets(dataset)) match {
       case s: Source => s.rows
@@ -37,6 +40,13 @@ class Database(
   private [logical] def update(node: Option[Node]): Database = node match {
     case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges)
     case None => this
+  }
+}
+
+
+object Database {
+  def apply(datasets: Dataset*): Database = {
+    new Compiler().accept(datasets).run()
   }
 }
 

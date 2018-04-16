@@ -9,214 +9,205 @@ object R {
 
 object DslTests extends TestSuite {
 
-def rederive(p: LogicProgram, db: Database): Database = {
-  var result = p.create()
-  for (table <- p.tableSet) {
-    for (row <- db(table)) {
-      result = result.INTO(table).INSERT(row:_*)
+def rederive(db: Database): Database = {
+  var result = Database(db.datasetDefs.toVector:_*)
+  for (k <- db.tableDefs) {
+    for (row <- db(k)) {
+      result = result.INTO(k).INSERT(row:_*)
     }
   }
   result
 }
 
-def assertSame(p: LogicProgram, db1: Database, db2: Database) = {
-  for (table <- p.tableSet) {
-    assert(db1(table) == db2(table))
-  }
-  for (view <- p.viewSet) {
-    assert(db1(view) == db2(view))
+def assertSame(a: Database, b: Database) = {
+  assert(a.datasetDefs == b.datasetDefs)
+  for (k <- a.datasetDefs) {
+    assert(a(k) == b(k))
   }
 }
 
-def assertConsistent(p: LogicProgram, db: Database) = {
-  assertSame(p, db, rederive(p, db))
+def assertConsistent(db: Database) = {
+  assertSame(db, rederive(db))
 }
 
 
 val tests = Tests {
 
 "Make sure DSL seems to create the expected things." - {
-  object SymbolTable extends LogicProgram {
-    val Scope = Table("id")
-    val Package = Table("path")
-    val PackageScope = Table("package", "scope")
-    val Binding = Table("name", "treeId", "scope")
+  val Scope = Table("id")
+  val Package = Table("path")
+  val PackageScope = Table("package", "scope")
+  val Binding = Table("name", "treeId", "scope")
 
-    val NumBindings = View(
-      SELECT ("scope", COUNT("name") AS "numBindings")
-      FROM Binding
-      GROUP_BY "scope"
-    )
+  val NumBindings = View(
+    SELECT ("scope", COUNT("name") AS "numBindings")
+    FROM Binding
+    GROUP_BY "scope"
+  )
 
-    val Fullpath = View("treeId", "package", "name") {
-      Binding("name", "treeId", "scope") and
-      PackageScope("package", "scope")
-    }
+  val Fullpath = View("treeId", "package", "name") {
+    Binding("name", "treeId", "scope") and
+    PackageScope("package", "scope")
   }
 
-  assert(SymbolTable.Scope.schema == Vector("id"))
-  assert(SymbolTable.Binding.schema == Vector("name", "treeId", "scope"))
-  assert(SymbolTable.NumBindings.schema == Vector("scope", "numBindings"))
+  assert(Scope.schema == Vector("id"))
+  assert(Binding.schema == Vector("name", "treeId", "scope"))
+  assert(NumBindings.schema == Vector("scope", "numBindings"))
 }
 
 "Try a simple view that just contains one 'or' operation." - {
-  object Foo extends LogicProgram {
-    val Likes = Table("x", "y")
-    val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
-  }
-  val start = Foo.create()
-  val snap1 = start INTO Foo.Likes INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Foo.Likes REMOVE (3, 4)
-  assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
-  assert(snap1(Foo.Friends) == Set(
+  val Likes = Table("x", "y")
+  val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
+
+  val start = Database(Friends, Likes)
+  val snap1 = start INTO Likes INSERT (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 FROM Likes REMOVE (3, 4)
+  assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Likes) == Set(R(1, 2), R(5, 6)))
+  assert(snap1(Friends) == Set(
     R(1, 2), R(2, 1),
     R(3, 4), R(4, 3),
     R(5, 6), R(6, 5)
   ))
-  assert(snap2(Foo.Friends) == Set(
+  assert(snap2(Friends) == Set(
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
   ))
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try the same simple view as before, only this time make it recursive." - {
-  object Foo extends LogicProgram {
-    val Likes = Table("x", "y")
-    val Friends: View = View("x", "y") { Likes("x", "y") or Friends("y", "x") }
-  }
+  val Likes = Table("x", "y")
+  lazy val Friends: View = View("x", "y") { Likes("x", "y") or Friends("y", "x") }
+
   // Everything is the same as before:
-  val start = Foo.create()
-  val snap1 = start INTO Foo.Likes INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Foo.Likes REMOVE (3, 4)
-  assert(snap1(Foo.Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap2(Foo.Likes) == Set(R(1, 2), R(5, 6)))
-  assert(snap1(Foo.Friends) == Set(
+  val start = Database(Friends, Likes)
+  val snap1 = start INTO Likes INSERT (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 FROM Likes REMOVE (3, 4)
+  assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Likes) == Set(R(1, 2), R(5, 6)))
+  assert(snap1(Friends) == Set(
     R(1, 2), R(2, 1),
     R(3, 4), R(4, 3),
     R(5, 6), R(6, 5)
   ))
-  assert(snap2(Foo.Friends) == Set(
+  assert(snap2(Friends) == Set(
     R(1, 2), R(2, 1),
     R(5, 6), R(6, 5)
   ))
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try joining two simple tables." - {
-  object Foo extends LogicProgram {
-    val Bar = Table("x", "y")
-    val Baz = Table("z", "w")
-    val Fiz = View("x", "yz", "w") requires {
-      Bar("x", "yz") and Baz("yz", "w")
-    }
+  val Bar = Table("x", "y")
+  val Baz = Table("z", "w")
+  val Fiz = View("x", "yz", "w") requires {
+    Bar("x", "yz") and Baz("yz", "w")
   }
-  val start = Foo.create()
-  val snap1 = start INTO Foo.Bar INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 INTO Foo.Baz INSERT (2, 3, 6, 7)
+
+  val start = Database(Bar, Baz, Fiz)
+  val snap1 = start INTO Bar INSERT (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 INTO Baz INSERT (2, 3, 6, 7)
   val snap3 = (snap2
-    FROM Foo.Bar REMOVE (5, 6)
-    INTO Foo.Baz INSERT (4, 5)
+    FROM Bar REMOVE (5, 6)
+    INTO Baz INSERT (4, 5)
   )
 
-  assert(snap1(Foo.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap1(Foo.Baz) == Set())
-  assert(snap1(Foo.Fiz) == Set())
+  assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap1(Baz) == Set())
+  assert(snap1(Fiz) == Set())
 
-  assert(snap2(Foo.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap2(Foo.Baz) == Set(R(2, 3), R(6, 7)))
-  assert(snap2(Foo.Fiz) == Set(R(1, 2, 3), R(5, 6, 7)))
+  assert(snap2(Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Baz) == Set(R(2, 3), R(6, 7)))
+  assert(snap2(Fiz) == Set(R(1, 2, 3), R(5, 6, 7)))
 
-  assert(snap3(Foo.Bar) == Set(R(1, 2), R(3, 4)))
-  assert(snap3(Foo.Baz) == Set(R(2, 3), R(4, 5), R(6, 7)))
-  assert(snap3(Foo.Fiz) == Set(R(1, 2, 3), R(3, 4, 5)))
+  assert(snap3(Bar) == Set(R(1, 2), R(3, 4)))
+  assert(snap3(Baz) == Set(R(2, 3), R(4, 5), R(6, 7)))
+  assert(snap3(Fiz) == Set(R(1, 2, 3), R(3, 4, 5)))
 
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
-  assertConsistent(Foo, snap3)
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
 }
 
 "Try a simple view that drops a column and introduces duplicates." - {
-  object Z extends LogicProgram {
-    val Foo = Table("x", "y", "z")
-    val Bar = View("x", "y") requires { Foo("x", "y", "z") }
-  }
-  val snap1 = Z.create().INTO(Z.Foo).INSERT(1, 2, 3, 1, 2, 4, 2, 3, 4)
-  val snap2 = snap1 FROM Z.Foo REMOVE (1, 2, 4)
-  val snap3 = snap2 FROM Z.Foo REMOVE (1, 2, 3)
+  val Foo = Table("x", "y", "z")
+  val Bar = View("x", "y") requires { Foo("x", "y", "z") }
+
+  val snap1 = Database(Bar).INTO(Foo).INSERT(1, 2, 3, 1, 2, 4, 2, 3, 4)
+  val snap2 = snap1 FROM Foo REMOVE (1, 2, 4)
+  val snap3 = snap2 FROM Foo REMOVE (1, 2, 3)
   val snap4 = (snap3
-    INTO Z.Foo INSERT (2, 3, 5)
-    FROM Z.Foo REMOVE (2, 3, 4, 2, 3, 5)
+    INTO Foo INSERT (2, 3, 5)
+    FROM Foo REMOVE (2, 3, 4, 2, 3, 5)
   )
-  assert(snap1(Z.Bar) == Set(R(1, 2), R(2, 3)))
-  assert(snap2(Z.Bar) == Set(R(1, 2), R(2, 3)))
-  assert(snap3(Z.Bar) == Set(R(2, 3)))
-  assert(snap4(Z.Bar) == Set())
-  assertConsistent(Z, snap1)
-  assertConsistent(Z, snap2)
-  assertConsistent(Z, snap3)
-  assertConsistent(Z, snap4)
+  assert(snap1(Bar) == Set(R(1, 2), R(2, 3)))
+  assert(snap2(Bar) == Set(R(1, 2), R(2, 3)))
+  assert(snap3(Bar) == Set(R(2, 3)))
+  assert(snap4(Bar) == Set())
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+  assertConsistent(snap4)
 }
 
 "Try a simple view that redundantly adds two tables." - {
-  object Z extends LogicProgram {
-    val Foo = Table("x", "y")
-    val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
-  }
-  val snap1 = Z.create().INTO(Z.Foo).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Z.Foo REMOVE (3, 4)
-  val snap3 = snap2 FROM Z.Foo REMOVE (1, 2, 5, 6)
-  assert(snap1(Z.Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap2(Z.Bar) == Set(R(1, 2), R(5, 6)))
-  assert(snap3(Z.Bar) == Set())
-  assertConsistent(Z, snap1)
-  assertConsistent(Z, snap2)
-  assertConsistent(Z, snap3)
+  val Foo = Table("x", "y")
+  val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
+
+  val snap1 = Database(Bar).INTO(Foo).INSERT(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 FROM Foo REMOVE (3, 4)
+  val snap3 = snap2 FROM Foo REMOVE (1, 2, 5, 6)
+  assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap2(Bar) == Set(R(1, 2), R(5, 6)))
+  assert(snap3(Bar) == Set())
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
 }
 
 "Try a simple ancestor relation." - {
-  object Family extends LogicProgram {
-    val Father = Table("father", "child")
-    val Mother = Table("mother", "child")
+  val Father = Table("father", "child")
+  val Mother = Table("mother", "child")
 
-    val Parent = View("parent", "child") requires {
-      Father("parent", "child") or Mother("parent", "child")
-    }
+  val Parent = View("parent", "child") requires {
+    Father("parent", "child") or Mother("parent", "child")
+  }
 
-    val Ancestor: View = View("ancestor", "descendant") requires {
-      Parent("ancestor", "descendant") or (
-        Ancestor("ancestor", "relative") and
-        Ancestor("relative", "descendant")
-      )
-    }
+  lazy val Ancestor: View = View("ancestor", "descendant") requires {
+    Parent("ancestor", "descendant") or (
+      Ancestor("ancestor", "relative") and
+      Ancestor("relative", "descendant")
+    )
+  }
 
-    val SameFather = View("a", "b") requires {
-      Father("f", "a") and Father("f", "b")
-    }
+  val SameFather = View("a", "b") requires {
+    Father("f", "a") and Father("f", "b")
+  }
 
-    val SameMother = View("a", "b") requires {
-      Mother("m", "a") and Mother("m", "b")
-    }
+  val SameMother = View("a", "b") requires {
+    Mother("m", "a") and Mother("m", "b")
+  }
 
-    val Siblings = View("a", "b") requires {
-      SameFather("a", "b") and
-      SameMother("a", "b") where {
-        record => record[String]("a") != record[String]("b")
-      }
+  val Siblings = View("a", "b") requires {
+    SameFather("a", "b") and
+    SameMother("a", "b") where {
+      record => record[String]("a") != record[String]("b")
     }
   }
 
-  val snap1 = (Family.create()
-    INTO Family.Father INSERT (
+  val start = Database(Ancestor, Siblings)
+
+  val snap1 = (start
+    INTO Father INSERT (
       "Phillip", "Charles",
       "Charles", "William",
       "Charles", "Harry",
       "William", "George"
     )
-    INTO Family.Mother INSERT (
+    INTO Mother INSERT (
       "Elizabeth II", "Charles",
       "Diana", "William",
       "Diana", "Harry",
@@ -224,18 +215,18 @@ val tests = Tests {
     )
   )
   val snap2 = (snap1
-    INTO Family.Father INSERT ("William", "Charlotte")
-    INTO Family.Mother INSERT ("Catherine", "Charlotte")
+    INTO Father INSERT ("William", "Charlotte")
+    INTO Mother INSERT ("Catherine", "Charlotte")
   )
   val snap3 = (snap2
-    FROM Family.Father REMOVE ("William", "Charlotte")
-    FROM Family.Mother REMOVE ("Catherine", "Charlotte")
+    FROM Father REMOVE ("William", "Charlotte")
+    FROM Mother REMOVE ("Catherine", "Charlotte")
   )
   val snap4 = (snap3
-    INTO Family.Father INSERT ("William", "Charlotte")
-    INTO Family.Mother INSERT ("Catherine", "Charlotte")
+    INTO Father INSERT ("William", "Charlotte")
+    INTO Mother INSERT ("Catherine", "Charlotte")
   )
-  assert(snap1(Family.Parent) == Set(
+  assert(snap1(Parent) == Set(
     R("Phillip", "Charles"),
     R("Charles", "William"),
     R("Charles", "Harry"),
@@ -247,7 +238,7 @@ val tests = Tests {
     R("Catherine", "George")
   ))
 
-  assert(snap1(Family.Ancestor) == Set(
+  assert(snap1(Ancestor) == Set(
     R("Phillip", "Charles"),
     R("Phillip", "William"),
     R("Phillip", "Harry"),
@@ -271,18 +262,18 @@ val tests = Tests {
     R("Catherine", "George")
   ))
 
-  assert(snap1(Family.Siblings) == Set(
+  assert(snap1(Siblings) == Set(
     R("Harry", "William"),
     R("William", "Harry")
   ))
 
   // snap2
-  assert(snap2(Family.Parent) == snap1(Family.Parent) ++ Set(
+  assert(snap2(Parent) == snap1(Parent) ++ Set(
     R("William", "Charlotte"),
     R("Catherine", "Charlotte")
   ))
 
-  assert(snap2(Family.Ancestor) == snap1(Family.Ancestor) ++ Set(
+  assert(snap2(Ancestor) == snap1(Ancestor) ++ Set(
     R("Phillip", "Charlotte"),
     R("Charles", "Charlotte"),
     R("William", "Charlotte"),
@@ -292,151 +283,149 @@ val tests = Tests {
     R("Catherine", "Charlotte")
   ))
 
-  assert(snap2(Family.Siblings) == snap1(Family.Siblings) ++ Set(
+  assert(snap2(Siblings) == snap1(Siblings) ++ Set(
     R("George", "Charlotte"),
     R("Charlotte", "George")
   ))
 
   // snap3
-  assert(snap3(Family.Parent) == snap1(Family.Parent))
-  assert(snap3(Family.Ancestor) == snap1(Family.Ancestor))
-  assert(snap3(Family.Siblings) == snap1(Family.Siblings))
+  assert(snap3(Parent) == snap1(Parent))
+  assert(snap3(Ancestor) == snap1(Ancestor))
+  assert(snap3(Siblings) == snap1(Siblings))
 
   // snap4
-  assert(snap4(Family.Parent) == snap2(Family.Parent))
-  assert(snap4(Family.Ancestor) == snap2(Family.Ancestor))
-  assert(snap4(Family.Siblings) == snap2(Family.Siblings))
+  assert(snap4(Parent) == snap2(Parent))
+  assert(snap4(Ancestor) == snap2(Ancestor))
+  assert(snap4(Siblings) == snap2(Siblings))
 
-  assertConsistent(Family, snap1)
-  assertConsistent(Family, snap2)
-  assertConsistent(Family, snap3)
-  assertConsistent(Family, snap4)
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+  assertConsistent(snap4)
 }
 
 "Try using a simple transform." - {
-  object Foo extends LogicProgram {
-    val Bar = Table("x", "y")
-    val Baz = View("x", "y") requires {
-      Bar("x", "y") changing {
-        record => Record(
-          "x" -> (record[Int](1) + 1),
-          "y" -> (record[Int](0) + 1)
-        )
-      }
+  val Bar = Table("x", "y")
+  val Baz = View("x", "y") requires {
+    Bar("x", "y") changing {
+      record => Record(
+        "x" -> (record[Int](1) + 1),
+        "y" -> (record[Int](0) + 1)
+      )
     }
   }
-  val start = Foo.create()
-  val snap1 = start.INTO(Foo.Bar).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.FROM(Foo.Bar).REMOVE(3, 4)
-  assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
-  assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
+
+  val start = Database(Bar, Baz)
+  val snap1 = start.INTO(Bar).INSERT(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.FROM(Bar).REMOVE(3, 4)
+  assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
+  assert(snap2(Baz) == Set(R(7, 6), R(3, 2)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try using a simple transform that changes the order of the fields." - {
-  object Foo extends LogicProgram {
-    val Bar = Table("x", "y")
-    val Baz = View("x", "y") requires {
-      Bar("x", "y") changing {
-        record => Record(
-          "y" -> (record[Int](0) + 1),
-          "x" -> (record[Int](1) + 1)
-        )
-      }
+  val Bar = Table("x", "y")
+  val Baz = View("x", "y") requires {
+    Bar("x", "y") changing {
+      record => Record(
+        "y" -> (record[Int](0) + 1),
+        "x" -> (record[Int](1) + 1)
+      )
     }
   }
+
   // The rest is the same as before.
-  val start = Foo.create()
-  val snap1 = start.INTO(Foo.Bar).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.FROM(Foo.Bar).REMOVE(3, 4)
-  assert(snap1(Foo.Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
-  assert(snap2(Foo.Baz) == Set(R(7, 6), R(3, 2)))
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
+  val start = Database(Bar, Baz)
+  val snap1 = start.INTO(Bar).INSERT(1, 2, 3, 4, 5, 6)
+  val snap2 = snap1.FROM(Bar).REMOVE(3, 4)
+  assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
+  assert(snap2(Baz) == Set(R(7, 6), R(3, 2)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try using a transform that recursively generates many rows." - {
-  object Foo extends LogicProgram {
-    val Bar = Table("x")
-    val Baz: View = View("x") requires {
-      Bar("x") or (Baz("x") changing { rec =>
-        val x = rec[Int]("x")
-        if (x <= 0) rec else Record("x" -> (x - 1))
-      })
-    }
+  val Bar = Table("x")
+
+  lazy val Baz: View = View("x") requires {
+    Bar("x") or (Baz("x") changing { rec =>
+      val x = rec[Int]("x")
+      if (x <= 0) rec else Record("x" -> (x - 1))
+    })
   }
-  val start = Foo.create()
-  val snap1 = start INTO Foo.Bar INSERT 10
-  val snap2 = snap1 INTO Foo.Bar INSERT 9
-  val snap3 = snap2 FROM Foo.Bar REMOVE 10
-  val snap4 = snap2 FROM Foo.Bar REMOVE 9
-  val snap5 = snap2 FROM Foo.Bar REMOVE (10, 9)
-  val snap6 = snap2 FROM Foo.Bar REMOVE (9, 10)
 
-  assert(snap1(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
-  assert(snap2(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
-  assert(snap3(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(i => R(i)))
-  assert(snap4(Foo.Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
-  assert(snap5(Foo.Baz) == Set())
-  assert(snap6(Foo.Baz) == Set())
+  val start = Database(Bar, Baz)
+  val snap1 = start INTO Bar INSERT 10
+  val snap2 = snap1 INTO Bar INSERT 9
+  val snap3 = snap2 FROM Bar REMOVE 10
+  val snap4 = snap2 FROM Bar REMOVE 9
+  val snap5 = snap2 FROM Bar REMOVE (10, 9)
+  val snap6 = snap2 FROM Bar REMOVE (9, 10)
 
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
-  assertConsistent(Foo, snap3)
-  assertConsistent(Foo, snap4)
-  assertConsistent(Foo, snap5)
-  assertConsistent(Foo, snap6)
+  assert(snap1(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap2(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap3(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(i => R(i)))
+  assert(snap4(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap5(Baz) == Set())
+  assert(snap6(Baz) == Set())
+
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+  assertConsistent(snap4)
+  assertConsistent(snap5)
+  assertConsistent(snap6)
 }
 
 "Try using a simple expansion." - {
-  object Foo extends LogicProgram {
-    val Bar = Table("x", "y", "z", "w")
-    val Baz = View("x", "other") requires {
-      Bar("x", "y", "z", "w") expandingTo ("x", "other") using {
-        rec => List(
-          Record("x" -> rec[Int]("x"), "other" -> rec[Int]("y")),
-          Record("x" -> rec[Int]("x"), "other" -> rec[Int]("z")),
-          // Try flipping the order one time, to make sure that the record
-          // is adapted correctly.
-          Record("other" -> rec[Int]("w"), "x" -> rec[Int]("x"))
-        )
-      }
+  val Bar = Table("x", "y", "z", "w")
+  val Baz = View("x", "other") requires {
+    Bar("x", "y", "z", "w") expandingTo ("x", "other") using {
+      rec => List(
+        Record("x" -> rec[Int]("x"), "other" -> rec[Int]("y")),
+        Record("x" -> rec[Int]("x"), "other" -> rec[Int]("z")),
+        // Try flipping the order one time, to make sure that the record
+        // is adapted correctly.
+        Record("other" -> rec[Int]("w"), "x" -> rec[Int]("x"))
+      )
     }
   }
-  val start = Foo.create()
-  val snap1 = start INTO Foo.Bar INSERT (1, 2, 3, 4, 5, 6, 7, 8)
-  val snap2 = snap1 FROM Foo.Bar REMOVE (5, 6, 7, 8)
-  assert(snap1(Foo.Baz) == Set(
+
+  val start = Database(Bar, Baz)
+  val snap1 = start INTO Bar INSERT (1, 2, 3, 4, 5, 6, 7, 8)
+  val snap2 = snap1 FROM Bar REMOVE (5, 6, 7, 8)
+  assert(snap1(Baz) == Set(
     R(1, 2), R(1, 3), R(1, 4),
     R(5, 6), R(5, 7), R(5, 8)
   ))
-  assert(snap2(Foo.Baz) == Set(R(1, 2), R(1, 3), R(1, 4)))
-  assertConsistent(Foo, snap1)
-  assertConsistent(Foo, snap2)
+  assert(snap2(Baz) == Set(R(1, 2), R(1, 3), R(1, 4)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try using simple subtraction." - {
-  object Z extends LogicProgram {
-    val Flights = Table("airline", "from", "to")
-    val Reaches: View = View("airline", "from", "to") {
-      Flights("airline", "from", "to") or (
-        Reaches("airline", "from", "layover") and
-        Reaches("airline", "layover", "to")
-      )
-    }
-    val Other = View("airline", "from", "to") {
-      Reaches("airline", "from", "to") where {
-        rec => rec[String]("airline") != "UA"
-      }
-    }
-    val OnlyUA = View("airline", "from", "to") {
-      Reaches("airline", "from", "to") butNot
-      Other("some-other-airline", "from", "to")
+  val Flights = Table("airline", "from", "to")
+
+  lazy val Reaches: View = View("airline", "from", "to") {
+    Flights("airline", "from", "to") or (
+      Reaches("airline", "from", "layover") and
+      Reaches("airline", "layover", "to")
+    )
+  }
+
+  val Other = View("airline", "from", "to") {
+    Reaches("airline", "from", "to") where {
+      rec => rec[String]("airline") != "UA"
     }
   }
-  val snap1 = (Z.create()
-    INTO Z.Flights INSERT (
+  val OnlyUA = View("airline", "from", "to") {
+    Reaches("airline", "from", "to") butNot
+    Other("some-other-airline", "from", "to")
+  }
+
+  val snap1 = (Database(Flights, Reaches, Other, OnlyUA)
+    INTO Flights INSERT (
       "UA", "SF", "DEN",
       "AA", "SF", "DAL",
       "UA", "DEN", "CHI",
@@ -447,15 +436,15 @@ val tests = Tests {
       "UA", "CHI", "NY"
     )
   )
-  val snap2 = snap1 INTO Z.Flights INSERT ("UA", "NY", "BOS")
-  val snap3 = snap2 INTO Z.Flights INSERT ("AA", "NY", "BOS")
-  val snap4 = snap3 FROM Z.Flights REMOVE ("AA", "CHI", "NY")
-  assertConsistent(Z, snap1)
-  assertConsistent(Z, snap2)
-  assertConsistent(Z, snap3)
-  assertConsistent(Z, snap4)
+  val snap2 = snap1 INTO Flights INSERT ("UA", "NY", "BOS")
+  val snap3 = snap2 INTO Flights INSERT ("AA", "NY", "BOS")
+  val snap4 = snap3 FROM Flights REMOVE ("AA", "CHI", "NY")
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+  assertConsistent(snap4)
 
-  assert(snap1(Z.Reaches) == Set(
+  assert(snap1(Reaches) == Set(
     R("AA", "CHI", "NY"),
     R("AA", "DAL", "CHI"),
     R("AA", "DAL", "NY"),
@@ -472,142 +461,153 @@ val tests = Tests {
     R("UA", "SF", "NY")
   ))
 
-  assert(snap1(Z.OnlyUA) == Set(
+  assert(snap1(OnlyUA) == Set(
     R("UA", "DEN", "CHI"),
     R("UA", "DEN", "DAL"),
     R("UA", "DEN", "NY"),
     R("UA", "SF", "DEN")
   ))
 
-  assert(snap2(Z.Reaches) == snap1(Z.Reaches) ++ Set(
+  assert(snap2(Reaches) == snap1(Reaches) ++ Set(
     R("UA", "NY", "BOS"),
     R("UA", "SF", "BOS"),
     R("UA", "CHI", "BOS"),
     R("UA", "DEN", "BOS")
   ))
 
-  assert(snap2(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
+  assert(snap2(OnlyUA) == snap1(OnlyUA) ++ Set(
     R("UA", "NY", "BOS"),
     R("UA", "SF", "BOS"),
     R("UA", "CHI", "BOS"),
     R("UA", "DEN", "BOS")
   ))
 
-  assert(snap3(Z.Reaches) == snap2(Z.Reaches) ++ Set(
+  assert(snap3(Reaches) == snap2(Reaches) ++ Set(
     R("AA", "NY", "BOS"),
     R("AA", "CHI", "BOS"),
     R("AA", "DAL", "BOS"),
     R("AA", "SF", "BOS")
   ))
 
-  assert(snap3(Z.OnlyUA) == snap1(Z.OnlyUA) ++ Set(
+  assert(snap3(OnlyUA) == snap1(OnlyUA) ++ Set(
     R("UA", "DEN", "BOS")
   ))
 
-  assert(snap4(Z.Reaches) == snap3(Z.Reaches) -- Set(
+  assert(snap4(Reaches) == snap3(Reaches) -- Set(
     R("AA", "CHI", "NY"),
     R("AA", "CHI", "BOS")
   ))
 
-  assert(snap4(Z.OnlyUA) == snap3(Z.OnlyUA) ++ Set(
+  assert(snap4(OnlyUA) == snap3(OnlyUA) ++ Set(
     R("UA", "CHI", "NY"),
     R("UA", "CHI", "BOS")
   ))
 }
 
 "Try making the same row from two different tables reach the same view in the same transaction" - {
-  object Z extends LogicProgram {
-    val Maybe1 = Table("id", "name")
-    val Maybe2 = Table("id", "name")
-    val Banned = Table("id", "name")
-    val Approved1 = View("id", "name") { Maybe1("id", "name") butNot Banned("id", "name") }
-    val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
-    val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
-  }
-  val snap1 = (Z.create()
-    INTO Z.Banned INSERT (1, "A", 2, "B")
-    INTO Z.Maybe1 INSERT (1, "A", 3, "C")
-    INTO Z.Maybe2 INSERT (1, "A", 4, "D")
+  val Maybe1 = Table("id", "name")
+  val Maybe2 = Table("id", "name")
+  val Banned = Table("id", "name")
+  val Approved1 = View("id", "name") { Maybe1("id", "name") butNot Banned("id", "name") }
+  val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
+  val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
+
+  val snap1 = (Database(Approved)
+    INTO Banned INSERT (1, "A", 2, "B")
+    INTO Maybe1 INSERT (1, "A", 3, "C")
+    INTO Maybe2 INSERT (1, "A", 4, "D")
   )
-  val snap2 = snap1 FROM Z.Banned REMOVE (1, "A")
-  val snap3a = snap2 FROM Z.Maybe1 REMOVE (1, "A")
-  val snap3b = snap2 FROM Z.Maybe2 REMOVE (1, "A")
-  assertConsistent(Z, snap1)
-  assertConsistent(Z, snap2)
-  assertConsistent(Z, snap3a)
-  assertConsistent(Z, snap3b)
-  assert(snap1(Z.Approved) == Set(R(3, "C"), R(4, "D")))
-  assert(snap2(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
-  assert(snap3a(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
-  assert(snap3b(Z.Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
+  val snap2 = snap1 FROM Banned REMOVE (1, "A")
+  val snap3a = snap2 FROM Maybe1 REMOVE (1, "A")
+  val snap3b = snap2 FROM Maybe2 REMOVE (1, "A")
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3a)
+  assertConsistent(snap3b)
+  assert(snap1(Approved) == Set(R(3, "C"), R(4, "D")))
+  assert(snap2(Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
+  assert(snap3a(Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
+  assert(snap3b(Approved) == Set(R(1, "A"), R(3, "C"), R(4, "D")))
 }
 
 "Try making a row recursively reach a view after the row's first transaction" - {
-  object Z extends LogicProgram {
-    val Root = Table("x")
-    val Lock = Table("x")
-    val Catch: View = View("x") {
-      Root("x") or (Catch("x") and Lock("x"))
-    }
+  val Root = Table("x")
+  val Lock = Table("x")
+
+  lazy val Catch: View = View("x") {
+    Root("x") or (Catch("x") and Lock("x"))
   }
-  val snap1 = Z.create().INTO(Z.Root).INSERT(1, 2, 3)
-  val snap2 = snap1 INTO Z.Lock INSERT (2, 3)
-  val snap3a = snap2 FROM Z.Root REMOVE 2
-  val snap3b = snap2 FROM Z.Lock REMOVE 2
+
+  val snap1 = Database(Catch).INTO(Root).INSERT(1, 2, 3)
+  val snap2 = snap1 INTO Lock INSERT (2, 3)
+  val snap3a = snap2 FROM Root REMOVE 2
+  val snap3b = snap2 FROM Lock REMOVE 2
 
   // The point is that when "2" is removed from the "Root" table in "step3a",
   // it should also be removed from the "Catch" view. But this row doesn't look
   // obviously recusive to the "Catch" view, since it doesn't arrive multiple
   // times in the same transaction.
 
-  assertConsistent(Z, snap1)
-  assertConsistent(Z, snap2)
-  assertConsistent(Z, snap3a)
-  assertConsistent(Z, snap3b)
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3a)
+  assertConsistent(snap3b)
 
-  assert(snap1(Z.Root) == Set(R(1), R(2), R(3)))
-  assert(snap1(Z.Lock) == Set())
-  assert(snap1(Z.Catch) == Set(R(1), R(2), R(3)))
+  assert(snap1(Root) == Set(R(1), R(2), R(3)))
+  assert(snap1(Lock) == Set())
+  assert(snap1(Catch) == Set(R(1), R(2), R(3)))
 
-  assert(snap2(Z.Root) == Set(R(1), R(2), R(3)))
-  assert(snap2(Z.Lock) == Set(R(2), R(3)))
-  assert(snap2(Z.Catch) == Set(R(1), R(2), R(3)))
+  assert(snap2(Root) == Set(R(1), R(2), R(3)))
+  assert(snap2(Lock) == Set(R(2), R(3)))
+  assert(snap2(Catch) == Set(R(1), R(2), R(3)))
 
-  assert(snap3a(Z.Root) == Set(R(1), R(3)))
-  assert(snap3a(Z.Lock) == Set(R(2), R(3)))
-  assert(snap3a(Z.Catch) == Set(R(1), R(3)))
+  assert(snap3a(Root) == Set(R(1), R(3)))
+  assert(snap3a(Lock) == Set(R(2), R(3)))
+  assert(snap3a(Catch) == Set(R(1), R(3)))
 
-  assert(snap3b(Z.Root) == Set(R(1), R(2), R(3)))
-  assert(snap3b(Z.Lock) == Set(R(3)))
-  assert(snap3b(Z.Catch) == Set(R(1), R(2), R(3)))
+  assert(snap3b(Root) == Set(R(1), R(2), R(3)))
+  assert(snap3b(Lock) == Set(R(3)))
+  assert(snap3b(Catch) == Set(R(1), R(2), R(3)))
 }
 
 "Try a simple view that just renames two columns." - {
-  object Foo extends LogicProgram {
-    val AB = Table("a", "b")
-    val BA = View("b", "a") { AB("a", "b") }
-  }
-  val start = Foo.create()
-  val snap1 = start INTO Foo.AB INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Foo.AB REMOVE (3, 4)
-  assert(snap1(Foo.AB) == Set(R(1, 2), R(3, 4), R(5, 6)))
-  assert(snap1(Foo.BA) == Set(R(2, 1), R(4, 3), R(6, 5)))
-  assert(snap2(Foo.AB) == Set(R(1, 2), R(5, 6)))
-  assert(snap2(Foo.BA) == Set(R(2, 1), R(6, 5)))
+  val AB = Table("a", "b")
+  val BA = View("b", "a") { AB("a", "b") }
+
+  val start = Database(BA)
+  val snap1 = start INTO AB INSERT (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 FROM AB REMOVE (3, 4)
+  assert(snap1(AB) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap1(BA) == Set(R(2, 1), R(4, 3), R(6, 5)))
+  assert(snap2(AB) == Set(R(1, 2), R(5, 6)))
+  assert(snap2(BA) == Set(R(2, 1), R(6, 5)))
 }
 
 "Try a simple SELECT statement that just selects everyting" - {
-  object Foo extends LogicProgram {
-    val ABC = Table("a", "b", "c")
-    val CPY = View(SELECT ("*") FROM ABC)
-  }
-  import Foo._
-  val start = create()
+  val ABC = Table("a", "b", "c")
+  val CPY = View(SELECT ("*") FROM ABC)
+
+  val start = Database(ABC, CPY)
   val snap1 = start INTO ABC INSERT (1, 2, 3, 4, 5, 6, 7, 8, 9)
   val snap2 = snap1 FROM ABC REMOVE (4, 5, 6)
   assert(snap1(ABC) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
   assert(snap1(CPY) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
   assert(snap2(ABC) == Set(R(1, 2, 3), R(7, 8, 9)))
   assert(snap2(CPY) == Set(R(1, 2, 3), R(7, 8, 9)))
+}
+
+"Make sure views can be mutually recusive" - {
+  val Foo = Table("a", "b")
+  lazy val Bar: View = View("a", "b") { Foo("b", "a") or Baz("a", "b") }
+  lazy val Baz: View = View("a", "b") { Foo("a", "b") or Bar("b", "a") }
+  val start = Database(Foo, Bar, Baz)
+  val snap1 = start INTO Foo INSERT (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 FROM Foo REMOVE (3, 4)
+  assert(snap1(Foo) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6), R(2, 1), R(4, 3), R(6, 5)))
+  assert(snap1(Baz) == Set(R(1, 2), R(3, 4), R(5, 6), R(2, 1), R(4, 3), R(6, 5)))
+  assert(snap2(Foo) == Set(R(1, 2), R(5, 6)))
+  assert(snap2(Bar) == Set(R(1, 2), R(5, 6), R(2, 1), R(6, 5)))
+  assert(snap2(Baz) == Set(R(1, 2), R(5, 6), R(2, 1), R(6, 5)))
 }
 }}

@@ -9,7 +9,7 @@ private class Compiler {
   val nodes = ArrayBuffer[Node]()
   val edges = ArrayBuffer[mutable.Set[Edge]]()
 
-  def accept(datasets: List[Dataset]): this.type = {
+  def accept(datasets: Seq[Dataset]): this.type = {
     datasets.foreach(compile)
     this
   }

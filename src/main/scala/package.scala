@@ -18,43 +18,6 @@ package object logical {
     }
   }
 
-  trait LogicProgram {
-    private val tables = ArrayBuffer[Table]()
-    private val views = ArrayBuffer[View]()
-
-    def tableSet = tables.toSet
-    def viewSet = views.toSet
-
-    def Table(fields: String*) = {
-      val table = new Table(fields.toVector)
-      tables += table
-      table
-    }
-
-    def View(term: => Term): View = {
-      val view = new View(term)
-      views += view
-      view
-    }
-
-    def View(fields: String*) = Projector(fields.toVector)
-
-    case class Projector(fields: Vector[String]) {
-      def apply(term: => Term): View = {
-        val result = new View(Project(term, fields))
-        views += result
-        result
-      }
-
-      def requires(term: => Term): View = apply(term)
-    }
-
-    def create(): Database = new Compiler()
-      .accept(tables.toList)
-      .accept(views.toList)
-      .run()
-  }
-
   case class SELECT(first: Column, columns: Column*) {
     def FROM(term: Term) = Statement(first +: columns.toVector, term)
   }
@@ -86,9 +49,23 @@ package object logical {
 
   class Table(val schema: Vector[String]) extends Dataset
 
+  object Table {
+    def apply(schema: String*) = new Table(schema.toVector)
+  }
+
   class View(term: => Term) extends Dataset {
     def body: Term = term
     lazy val schema = term.schema
+  }
+
+  object View {
+    def apply(schema: String*) = Projector(schema.toVector)
+    def apply(term: => Term) = new View(term)
+  }
+
+  case class Projector(schema: Vector[String]) {
+    def apply(term: => Term): View = new View(Project(term, schema))
+    def requires(term: => Term): View = apply(term)
   }
 
   case class And(left: Term, right: Term) extends Term {
