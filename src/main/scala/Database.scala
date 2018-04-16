@@ -14,12 +14,12 @@ class Database(
     }
   }
 
-  case class into(table: Table) {
-    def insert(rows: Any*): Database = update(table, rows.toVector, true)
+  case class INTO(table: Table) {
+    def INSERT(rows: Any*): Database = update(table, rows.toVector, true)
   }
 
-  case class from(table: Table) {
-    def remove(rows: Any*): Database = update(table, rows.toVector, false)
+  case class FROM(table: Table) {
+    def REMOVE(rows: Any*): Database = update(table, rows.toVector, false)
   }
 
   private def update(table: Table, rows: Vector[Any], isInsert: Boolean): Database = {
