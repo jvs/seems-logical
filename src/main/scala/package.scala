@@ -1,10 +1,10 @@
 package seems
 
+import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 
 package object logical {
-  /** Define a Row as a Vector of "Any" objects. */
   type Row = Vector[Any]
 
   class Record(val row: Row, val schema: Vector[String]) {
@@ -17,6 +17,58 @@ package object logical {
       new Record(items.map(_._2).toVector, items.map(_._1).toVector)
     }
   }
+
+  trait LogicProgram {
+    private val tables = ArrayBuffer[Table]()
+    private val views = ArrayBuffer[View]()
+
+    def tableSet = tables.toSet
+    def viewSet = views.toSet
+
+    def Table(fields: String*) = {
+      val table = new Table(fields.toVector)
+      tables += table
+      table
+    }
+
+    def View(term: => Term): View = {
+      val view = new View(term)
+      views += view
+      view
+    }
+
+    def View(fields: String*) = Projector(fields.toVector)
+
+    case class Projector(fields: Vector[String]) {
+      def apply(term: => Term): View = {
+        val result = new View(Project(term, fields))
+        views += result
+        result
+      }
+
+      def requires(term: => Term): View = apply(term)
+    }
+
+    def create(): Database = new Compiler()
+      .accept(tables.toList)
+      .accept(views.toList)
+      .run()
+  }
+
+  case class SELECT(first: Column, columns: Column*) {
+    def FROM(term: Term) = Statement(first +: columns.toVector, term)
+  }
+
+  private def aggFunc(func: String) = (col: String) => AggregateColumn(func, col)
+  val AVG = aggFunc("AVG")
+  val COUNT = aggFunc("COUNT")
+  val MAX = aggFunc("MAX")
+  val MEDIAN = aggFunc("MEDIAN")
+  val MIN = aggFunc("MIN")
+  val MODE = aggFunc("MODE")
+  // Maybe provide "LIST_OF" or "BAG_OF" as well?
+  val SET_OF = aggFunc("SET_OF")
+  val SUM = aggFunc("SUM")
 
   sealed trait Term { self =>
     def and(other: Term): Term = And(this, other)

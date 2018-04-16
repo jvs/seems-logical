@@ -1,7 +1,7 @@
 package test.seems.logical
 
 import utest._
-import seems.logical.{Database, LogicProgram, Record, Row, View}
+import seems.logical._
 
 object R {
   def apply(items: Any*): Row = items.toVector
