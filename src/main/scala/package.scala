@@ -1,10 +1,10 @@
 package seems
 
+import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 
 package object logical {
-  /** Define a Row as a Vector of "Any" objects. */
   type Row = Vector[Any]
 
   class Record(val row: Row, val schema: Vector[String]) {
@@ -18,28 +18,86 @@ package object logical {
     }
   }
 
-  class Dataset(val fields: Vector[String]) {
-    def apply(args: String*) = Rename(this, args.toVector)
+  case class SELECT(first: Column, columns: Column*) {
+    def FROM(term: Term) = Statement(first +: columns.toVector, term)
   }
 
-  class Table(fields: Vector[String]) extends Dataset(fields)
-  class View(fields: Vector[String], term: => Term) extends Dataset(fields) {
-    def body: Term = term
+  object INSERT {
+    case class INTO(table: Table) {
+      def VALUES(values: Any*) = InsertStatement(table, values.toVector)
+    }
   }
+
+  object DELETE {
+    case class FROM(table: Table) {
+      def VALUES(values: Any*) = DeleteStatement(table, values.toVector)
+      // def WHERE(predicate: Record => Boolean)
+    }
+  }
+
+  case class InsertStatement(table: Table, values: Vector[Any])
+  case class DeleteStatement(table: Table, values: Vector[Any])
+
+
+  private def aggFunc(func: String) = (col: String) => AggregateColumn(func, col)
+  val AVG = aggFunc("AVG")
+  val COUNT = aggFunc("COUNT")
+  val MAX = aggFunc("MAX")
+  val MEDIAN = aggFunc("MEDIAN")
+  val MIN = aggFunc("MIN")
+  val MODE = aggFunc("MODE")
+  // Maybe provide "LIST_OF" or "BAG_OF" as well?
+  val SET_OF = aggFunc("SET_OF")
+  val SUM = aggFunc("SUM")
 
   sealed trait Term { self =>
     def and(other: Term): Term = And(this, other)
+    def apply(args: String*) = Rename(this, args.toVector)
     def butNot(other: Term): Term = ButNot(this, other)
     def changing(function: Record => Record) = Changing(this, function)
     def expandingTo(schema: String*) = ExandBuilder(self, schema.toVector)
-    // def groupingBy(function: Record => Any) = GroupingBy(this, function)
     def or(other: Term): Term = Or(this, other)
-    def where(predicate: Record => Boolean) = Where(this, predicate)
+    def where(predicate: Record => Boolean): Term = Where(this, predicate)
+
+    val schema: Vector[String]
   }
 
-  case class And(left: Term, right: Term) extends Term
-  case class ButNot(left: Term, right: Term) extends Term
-  case class Changing(term: Term, transform: Record => Record) extends Term
+  sealed trait Dataset extends Term
+
+  class Table(val schema: Vector[String]) extends Dataset
+
+  object Table {
+    def apply(schema: String*) = new Table(schema.toVector)
+  }
+
+  class View(term: => Term) extends Dataset {
+    def body: Term = term
+    lazy val schema = term.schema
+  }
+
+  object View {
+    def apply(schema: String*) = Projector(schema.toVector)
+    def apply(term: => Term) = new View(term)
+  }
+
+  case class Projector(schema: Vector[String]) {
+    def apply(term: => Term): View = new View(Project(term, schema))
+    def requires(term: => Term): View = apply(term)
+  }
+
+  case class And(left: Term, right: Term) extends Term {
+    lazy val schema = {
+      left.schema ++ right.schema.filter { x => !left.schema.contains(x) }
+    }
+  }
+
+  case class ButNot(left: Term, right: Term) extends Term {
+    lazy val schema = left.schema
+  }
+
+  case class Changing(term: Term, transform: Record => Record) extends Term {
+    lazy val schema = term.schema
+  }
 
   case class Expanding(
     term: Term,
@@ -47,21 +105,41 @@ package object logical {
     expand: Record => List[Record]
   ) extends Term
 
-  case class Or(left: Term, right: Term) extends Term
-  case class Rename(dataset: Dataset, fields: Vector[String]) extends Term
-  case class Where(term: Term, predicate: Record => Boolean) extends Term
+  case class Or(left: Term, right: Term) extends Term {
+    lazy val schema = left.schema.filter { x => right.schema.contains(x) }
+  }
+
+  case class Project(term: Term, schema: Vector[String]) extends Term
+  case class Rename(term: Term, schema: Vector[String]) extends Term
+
+  case class Where(term: Term, predicate: Record => Boolean) extends Term {
+    lazy val schema = term.schema
+  }
 
   case class Statement(
-    columns: Vector[Column],
-    datasets: Vector[Dataset],
+    select: Vector[Column],
+    from: Term,
+    predicate: Option[Record => Boolean] = None,
     groups: Vector[Column] = Vector()
   ) extends Term {
-    def groupBy(columns: Column*) = this.copy(groups = this.groups ++ columns)
+    def GROUP_BY(columns: Column*) = copy(groups = groups ++ columns)
+
+    def WHERE(p: Record => Boolean): Statement = {
+      copy(predicate=Some(predicate match {
+        case Some(q) => (x => q(x) && p(x))
+        case None => p
+      }))
+    }
+
+    lazy val schema = select match {
+      case Vector(NamedColumn("*")) => from.schema
+      case cols => cols.map(_.name)
+    }
   }
 
   sealed trait Column {
     def name: String
-    def as(alias: String) = AliasColumn(this, alias)
+    def AS(alias: String) = AliasColumn(this, alias)
   }
 
   case class NamedColumn(name: String) extends Column
@@ -74,7 +152,7 @@ package object logical {
 
   case class AliasColumn(source: Column, alias: String) extends Column {
     def name = alias
-    override def as(alias: String) = AliasColumn(source, alias)
+    override def AS(alias: String) = AliasColumn(source, alias)
   }
 
   case class SchemaError(message: String) extends Exception(message)
