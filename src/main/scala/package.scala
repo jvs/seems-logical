@@ -22,6 +22,23 @@ package object logical {
     def FROM(term: Term) = Statement(first +: columns.toVector, term)
   }
 
+  object INSERT {
+    case class INTO(table: Table) {
+      def VALUES(values: Any*) = InsertStatement(table, values.toVector)
+    }
+  }
+
+  object DELETE {
+    case class FROM(table: Table) {
+      def VALUES(values: Any*) = DeleteStatement(table, values.toVector)
+      // def WHERE(predicate: Record => Boolean)
+    }
+  }
+
+  case class InsertStatement(table: Table, values: Vector[Any])
+  case class DeleteStatement(table: Table, values: Vector[Any])
+
+
   private def aggFunc(func: String) = (col: String) => AggregateColumn(func, col)
   val AVG = aggFunc("AVG")
   val COUNT = aggFunc("COUNT")

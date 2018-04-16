@@ -17,22 +17,25 @@ class Database(
     }
   }
 
-  case class INTO(table: Table) {
-    def INSERT(rows: Any*): Database = update(table, rows.toVector, true)
+  def apply(stmt: InsertStatement): Database = {
+    update(stmt.table, stmt.values, isInsert = true)
   }
 
-  case class FROM(table: Table) {
-    def REMOVE(rows: Any*): Database = update(table, rows.toVector, false)
+  def apply(stmt: DeleteStatement): Database = {
+    update(stmt.table, stmt.values, isInsert = false)
   }
 
-  private def update(table: Table, rows: Vector[Any], isInsert: Boolean): Database = {
+  def THEN(stmt: InsertStatement) = apply(stmt)
+  def THEN(stmt: DeleteStatement) = apply(stmt)
+
+  private def update(table: Table, values: Vector[Any], isInsert: Boolean): Database = {
     val expected = table.schema.length
-    if (rows.length % expected != 0) {
+    if (values.length % expected != 0) {
       throw new RuntimeException(
         s"Expected number of values to be divisible by ${expected}."
       )
     }
-    rows.grouped(expected).foldLeft(this) {
+    values.grouped(expected).foldLeft(this) {
       case (db, row) => transact(db, table, row, isInsert)
     }
   }

@@ -13,7 +13,7 @@ def rederive(db: Database): Database = {
   var result = Database(db.datasetDefs.toVector:_*)
   for (k <- db.tableDefs) {
     for (row <- db(k)) {
-      result = result.INTO(k).INSERT(row:_*)
+      result = result { INSERT INTO k VALUES (row:_*) }
     }
   }
   result
@@ -60,8 +60,8 @@ val tests = Tests {
   val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
 
   val start = Database(Friends, Likes)
-  val snap1 = start INTO Likes INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Likes REMOVE (3, 4)
+  val snap1 = start { INSERT INTO Likes VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Likes VALUES (3, 4) }
   assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Friends) == Set(
@@ -83,8 +83,8 @@ val tests = Tests {
 
   // Everything is the same as before:
   val start = Database(Friends, Likes)
-  val snap1 = start INTO Likes INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Likes REMOVE (3, 4)
+  val snap1 = start { INSERT INTO Likes VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Likes VALUES (3, 4) }
   assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Likes) == Set(R(1, 2), R(5, 6)))
   assert(snap1(Friends) == Set(
@@ -108,12 +108,11 @@ val tests = Tests {
   }
 
   val start = Database(Bar, Baz, Fiz)
-  val snap1 = start INTO Bar INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 INTO Baz INSERT (2, 3, 6, 7)
-  val snap3 = (snap2
-    FROM Bar REMOVE (5, 6)
-    INTO Baz INSERT (4, 5)
-  )
+  val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { INSERT INTO Baz VALUES (2, 3, 6, 7) }
+  val snap3 = snap2
+    { DELETE FROM Bar VALUES (5, 6) }
+    { INSERT INTO Baz VALUES (4, 5) }
 
   assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap1(Baz) == Set())
@@ -136,13 +135,15 @@ val tests = Tests {
   val Foo = Table("x", "y", "z")
   val Bar = View("x", "y") requires { Foo("x", "y", "z") }
 
-  val snap1 = Database(Bar).INTO(Foo).INSERT(1, 2, 3, 1, 2, 4, 2, 3, 4)
-  val snap2 = snap1 FROM Foo REMOVE (1, 2, 4)
-  val snap3 = snap2 FROM Foo REMOVE (1, 2, 3)
-  val snap4 = (snap3
-    INTO Foo INSERT (2, 3, 5)
-    FROM Foo REMOVE (2, 3, 4, 2, 3, 5)
-  )
+  val snap1 = Database(Bar) {
+    INSERT INTO Foo VALUES (1, 2, 3, 1, 2, 4, 2, 3, 4)
+  }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (1, 2, 4) }
+  val snap3 = snap2 { DELETE FROM Foo VALUES (1, 2, 3) }
+  val snap4 = snap3
+    { INSERT INTO Foo VALUES (2, 3, 5) }
+    { DELETE FROM Foo VALUES (2, 3, 4, 2, 3, 5) }
+
   assert(snap1(Bar) == Set(R(1, 2), R(2, 3)))
   assert(snap2(Bar) == Set(R(1, 2), R(2, 3)))
   assert(snap3(Bar) == Set(R(2, 3)))
@@ -157,9 +158,11 @@ val tests = Tests {
   val Foo = Table("x", "y")
   val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
 
-  val snap1 = Database(Bar).INTO(Foo).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Foo REMOVE (3, 4)
-  val snap3 = snap2 FROM Foo REMOVE (1, 2, 5, 6)
+  val snap1 = Database(Bar) {
+    INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6)
+  }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (3, 4) }
+  val snap3 = snap2 { DELETE FROM Foo VALUES (1, 2, 5, 6) }
   assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap2(Bar) == Set(R(1, 2), R(5, 6)))
   assert(snap3(Bar) == Set())
@@ -200,32 +203,33 @@ val tests = Tests {
 
   val start = Database(Ancestor, Siblings)
 
-  val snap1 = (start
-    INTO Father INSERT (
+  val snap1 = start {
+    INSERT INTO Father VALUES (
       "Phillip", "Charles",
       "Charles", "William",
       "Charles", "Harry",
       "William", "George"
     )
-    INTO Mother INSERT (
+  } THEN {
+    INSERT INTO Mother VALUES (
       "Elizabeth II", "Charles",
       "Diana", "William",
       "Diana", "Harry",
       "Catherine", "George"
     )
-  )
-  val snap2 = (snap1
-    INTO Father INSERT ("William", "Charlotte")
-    INTO Mother INSERT ("Catherine", "Charlotte")
-  )
-  val snap3 = (snap2
-    FROM Father REMOVE ("William", "Charlotte")
-    FROM Mother REMOVE ("Catherine", "Charlotte")
-  )
-  val snap4 = (snap3
-    INTO Father INSERT ("William", "Charlotte")
-    INTO Mother INSERT ("Catherine", "Charlotte")
-  )
+  }
+  val snap2 = snap1
+    { INSERT INTO Father VALUES ("William", "Charlotte") }
+    { INSERT INTO Mother VALUES ("Catherine", "Charlotte") }
+
+  val snap3 = snap2
+    { DELETE FROM Father VALUES ("William", "Charlotte") }
+    { DELETE FROM Mother VALUES ("Catherine", "Charlotte") }
+
+  val snap4 = snap3
+    { INSERT INTO Father VALUES ("William", "Charlotte") }
+    { INSERT INTO Mother VALUES ("Catherine", "Charlotte") }
+
   assert(snap1(Parent) == Set(
     R("Phillip", "Charles"),
     R("Charles", "William"),
@@ -316,8 +320,8 @@ val tests = Tests {
   }
 
   val start = Database(Bar, Baz)
-  val snap1 = start.INTO(Bar).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.FROM(Bar).REMOVE(3, 4)
+  val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Bar VALUES (3, 4) }
   assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Baz) == Set(R(7, 6), R(3, 2)))
   assertConsistent(snap1)
@@ -337,8 +341,8 @@ val tests = Tests {
 
   // The rest is the same as before.
   val start = Database(Bar, Baz)
-  val snap1 = start.INTO(Bar).INSERT(1, 2, 3, 4, 5, 6)
-  val snap2 = snap1.FROM(Bar).REMOVE(3, 4)
+  val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Bar VALUES (3, 4) }
   assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Baz) == Set(R(7, 6), R(3, 2)))
   assertConsistent(snap1)
@@ -356,12 +360,12 @@ val tests = Tests {
   }
 
   val start = Database(Bar, Baz)
-  val snap1 = start INTO Bar INSERT 10
-  val snap2 = snap1 INTO Bar INSERT 9
-  val snap3 = snap2 FROM Bar REMOVE 10
-  val snap4 = snap2 FROM Bar REMOVE 9
-  val snap5 = snap2 FROM Bar REMOVE (10, 9)
-  val snap6 = snap2 FROM Bar REMOVE (9, 10)
+  val snap1 = start { INSERT INTO Bar VALUES 10 }
+  val snap2 = snap1 { INSERT INTO Bar VALUES 9 }
+  val snap3 = snap2 { DELETE FROM Bar VALUES 10 }
+  val snap4 = snap2 { DELETE FROM Bar VALUES 9 }
+  val snap5 = snap2 { DELETE FROM Bar VALUES (10, 9) }
+  val snap6 = snap2 { DELETE FROM Bar VALUES (9, 10) }
 
   assert(snap1(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
   assert(snap2(Baz) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
@@ -393,8 +397,8 @@ val tests = Tests {
   }
 
   val start = Database(Bar, Baz)
-  val snap1 = start INTO Bar INSERT (1, 2, 3, 4, 5, 6, 7, 8)
-  val snap2 = snap1 FROM Bar REMOVE (5, 6, 7, 8)
+  val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6, 7, 8) }
+  val snap2 = snap1 { DELETE FROM Bar VALUES (5, 6, 7, 8) }
   assert(snap1(Baz) == Set(
     R(1, 2), R(1, 3), R(1, 4),
     R(5, 6), R(5, 7), R(5, 8)
@@ -419,13 +423,14 @@ val tests = Tests {
       rec => rec[String]("airline") != "UA"
     }
   }
+
   val OnlyUA = View("airline", "from", "to") {
     Reaches("airline", "from", "to") butNot
     Other("some-other-airline", "from", "to")
   }
 
-  val snap1 = (Database(Flights, Reaches, Other, OnlyUA)
-    INTO Flights INSERT (
+  val snap1 = Database(Flights, Reaches, Other, OnlyUA) {
+    INSERT INTO Flights VALUES (
       "UA", "SF", "DEN",
       "AA", "SF", "DAL",
       "UA", "DEN", "CHI",
@@ -435,10 +440,10 @@ val tests = Tests {
       "AA", "CHI", "NY",
       "UA", "CHI", "NY"
     )
-  )
-  val snap2 = snap1 INTO Flights INSERT ("UA", "NY", "BOS")
-  val snap3 = snap2 INTO Flights INSERT ("AA", "NY", "BOS")
-  val snap4 = snap3 FROM Flights REMOVE ("AA", "CHI", "NY")
+  }
+  val snap2 = snap1 { INSERT INTO Flights VALUES ("UA", "NY", "BOS") }
+  val snap3 = snap2 { INSERT INTO Flights VALUES ("AA", "NY", "BOS") }
+  val snap4 = snap3 { DELETE FROM Flights VALUES ("AA", "CHI", "NY") }
   assertConsistent(snap1)
   assertConsistent(snap2)
   assertConsistent(snap3)
@@ -512,14 +517,14 @@ val tests = Tests {
   val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
   val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
 
-  val snap1 = (Database(Approved)
-    INTO Banned INSERT (1, "A", 2, "B")
-    INTO Maybe1 INSERT (1, "A", 3, "C")
-    INTO Maybe2 INSERT (1, "A", 4, "D")
-  )
-  val snap2 = snap1 FROM Banned REMOVE (1, "A")
-  val snap3a = snap2 FROM Maybe1 REMOVE (1, "A")
-  val snap3b = snap2 FROM Maybe2 REMOVE (1, "A")
+  val snap1 = Database(Approved)
+    { INSERT INTO Banned VALUES (1, "A", 2, "B") }
+    { INSERT INTO Maybe1 VALUES (1, "A", 3, "C") }
+    { INSERT INTO Maybe2 VALUES (1, "A", 4, "D") }
+
+  val snap2 = snap1 { DELETE FROM Banned VALUES (1, "A") }
+  val snap3a = snap2 { DELETE FROM Maybe1 VALUES (1, "A") }
+  val snap3b = snap2 { DELETE FROM Maybe2 VALUES (1, "A") }
   assertConsistent(snap1)
   assertConsistent(snap2)
   assertConsistent(snap3a)
@@ -538,10 +543,10 @@ val tests = Tests {
     Root("x") or (Catch("x") and Lock("x"))
   }
 
-  val snap1 = Database(Catch).INTO(Root).INSERT(1, 2, 3)
-  val snap2 = snap1 INTO Lock INSERT (2, 3)
-  val snap3a = snap2 FROM Root REMOVE 2
-  val snap3b = snap2 FROM Lock REMOVE 2
+  val snap1 = Database(Catch) { INSERT INTO Root VALUES (1, 2, 3) }
+  val snap2 = snap1 { INSERT INTO Lock VALUES (2, 3) }
+  val snap3a = snap2 { DELETE FROM Root VALUES 2 }
+  val snap3b = snap2 { DELETE FROM Lock VALUES 2 }
 
   // The point is that when "2" is removed from the "Root" table in "step3a",
   // it should also be removed from the "Catch" view. But this row doesn't look
@@ -575,8 +580,8 @@ val tests = Tests {
   val BA = View("b", "a") { AB("a", "b") }
 
   val start = Database(BA)
-  val snap1 = start INTO AB INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM AB REMOVE (3, 4)
+  val snap1 = start { INSERT INTO AB VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM AB VALUES (3, 4) }
   assert(snap1(AB) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap1(BA) == Set(R(2, 1), R(4, 3), R(6, 5)))
   assert(snap2(AB) == Set(R(1, 2), R(5, 6)))
@@ -588,8 +593,8 @@ val tests = Tests {
   val CPY = View(SELECT ("*") FROM ABC)
 
   val start = Database(ABC, CPY)
-  val snap1 = start INTO ABC INSERT (1, 2, 3, 4, 5, 6, 7, 8, 9)
-  val snap2 = snap1 FROM ABC REMOVE (4, 5, 6)
+  val snap1 = start { INSERT INTO ABC VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9) }
+  val snap2 = snap1 { DELETE FROM ABC VALUES (4, 5, 6) }
   assert(snap1(ABC) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
   assert(snap1(CPY) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
   assert(snap2(ABC) == Set(R(1, 2, 3), R(7, 8, 9)))
@@ -601,8 +606,8 @@ val tests = Tests {
   lazy val Bar: View = View("a", "b") { Foo("b", "a") or Baz("a", "b") }
   lazy val Baz: View = View("a", "b") { Foo("a", "b") or Bar("b", "a") }
   val start = Database(Foo, Bar, Baz)
-  val snap1 = start INTO Foo INSERT (1, 2, 3, 4, 5, 6)
-  val snap2 = snap1 FROM Foo REMOVE (3, 4)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (3, 4) }
   assert(snap1(Foo) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap1(Bar) == Set(R(1, 2), R(3, 4), R(5, 6), R(2, 1), R(4, 3), R(6, 5)))
   assert(snap1(Baz) == Set(R(1, 2), R(3, 4), R(5, 6), R(2, 1), R(4, 3), R(6, 5)))
@@ -610,4 +615,5 @@ val tests = Tests {
   assert(snap2(Bar) == Set(R(1, 2), R(5, 6), R(2, 1), R(6, 5)))
   assert(snap2(Baz) == Set(R(1, 2), R(5, 6), R(2, 1), R(6, 5)))
 }
+
 }}
