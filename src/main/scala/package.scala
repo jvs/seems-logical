@@ -18,23 +18,20 @@ package object logical {
     }
   }
 
-  class Dataset(val fields: Vector[String]) {
-    def apply(args: String*) = Rename(this, args.toVector)
-  }
-
-  class Table(fields: Vector[String]) extends Dataset(fields)
-  class View(fields: Vector[String], term: => Term) extends Dataset(fields) {
-    def body: Term = term
-  }
-
   sealed trait Term { self =>
     def and(other: Term): Term = And(this, other)
+    def apply(args: String*) = Rename(this, args.toVector)
     def butNot(other: Term): Term = ButNot(this, other)
     def changing(function: Record => Record) = Changing(this, function)
     def expandingTo(schema: String*) = ExandBuilder(self, schema.toVector)
-    // def groupingBy(function: Record => Any) = GroupingBy(this, function)
     def or(other: Term): Term = Or(this, other)
-    def where(predicate: Record => Boolean) = Where(this, predicate)
+    def where(predicate: Record => Boolean): Term = Where(this, predicate)
+  }
+
+  sealed trait Dataset extends Term
+  class Table(val fields: Vector[String]) extends Dataset
+  class View(term: => Term) extends Dataset {
+    def body: Term = term
   }
 
   case class And(left: Term, right: Term) extends Term
@@ -48,20 +45,29 @@ package object logical {
   ) extends Term
 
   case class Or(left: Term, right: Term) extends Term
-  case class Rename(dataset: Dataset, fields: Vector[String]) extends Term
+  case class Project(term: Term, fields: Vector[String]) extends Term
+  case class Rename(term: Term, fields: Vector[String]) extends Term
   case class Where(term: Term, predicate: Record => Boolean) extends Term
 
   case class Statement(
-    columns: Vector[Column],
-    datasets: Vector[Dataset],
+    select: Vector[Column],
+    from: Term,
+    predicate: Option[Record => Boolean] = None,
     groups: Vector[Column] = Vector()
   ) extends Term {
-    def groupBy(columns: Column*) = this.copy(groups = this.groups ++ columns)
+    def GROUP_BY(columns: Column*) = copy(groups = groups ++ columns)
+
+    def WHERE(p: Record => Boolean): Statement = {
+      copy(predicate=Some(predicate match {
+        case Some(q) => (x => q(x) && p(x))
+        case None => p
+      }))
+    }
   }
 
   sealed trait Column {
     def name: String
-    def as(alias: String) = AliasColumn(this, alias)
+    def AS(alias: String) = AliasColumn(this, alias)
   }
 
   case class NamedColumn(name: String) extends Column
@@ -74,7 +80,7 @@ package object logical {
 
   case class AliasColumn(source: Column, alias: String) extends Column {
     def name = alias
-    override def as(alias: String) = AliasColumn(source, alias)
+    override def AS(alias: String) = AliasColumn(source, alias)
   }
 
   case class SchemaError(message: String) extends Exception(message)

@@ -43,9 +43,9 @@ val tests = Tests {
     val Binding = Table("name", "treeId", "scope")
 
     val NumBindings = View(
-      select("scope", count("name") as "numBindings")
-      from Binding
-      groupBy "scope"
+      SELECT ("scope", COUNT("name") AS "numBindings")
+      FROM Binding
+      GROUP_BY "scope"
     )
 
     val Fullpath = View("treeId", "package", "name") {
@@ -56,7 +56,6 @@ val tests = Tests {
 
   assert(SymbolTable.Scope.fields == Vector("id"))
   assert(SymbolTable.Binding.fields == Vector("name", "treeId", "scope"))
-  assert(SymbolTable.NumBindings.fields == Vector("scope", "numBindings"))
 }
 
 "Try a simple view that just contains one 'or' operation." - {
@@ -583,5 +582,34 @@ val tests = Tests {
   assert(snap3b(Z.Root) == Set(R(1), R(2), R(3)))
   assert(snap3b(Z.Lock) == Set(R(3)))
   assert(snap3b(Z.Catch) == Set(R(1), R(2), R(3)))
+}
+
+"Try a simple view that just renames two columns." - {
+  object Foo extends Schema {
+    val AB = Table("a", "b")
+    val BA = View("b", "a") { AB("a", "b") }
+  }
+  val start = Foo.create()
+  val snap1 = start into Foo.AB insert (1, 2, 3, 4, 5, 6)
+  val snap2 = snap1 from Foo.AB remove (3, 4)
+  assert(snap1(Foo.AB) == Set(R(1, 2), R(3, 4), R(5, 6)))
+  assert(snap1(Foo.BA) == Set(R(2, 1), R(4, 3), R(6, 5)))
+  assert(snap2(Foo.AB) == Set(R(1, 2), R(5, 6)))
+  assert(snap2(Foo.BA) == Set(R(2, 1), R(6, 5)))
+}
+
+"Try a simple SELECT statement that just selects everyting" - {
+  object Foo extends Schema {
+    val ABC = Table("a", "b", "c")
+    val CPY = View(SELECT ("*") FROM ABC)
+  }
+  import Foo._
+  val start = create()
+  val snap1 = start into ABC insert (1, 2, 3, 4, 5, 6, 7, 8, 9)
+  val snap2 = snap1 from ABC remove (4, 5, 6)
+  assert(snap1(ABC) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
+  assert(snap1(CPY) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
+  assert(snap2(ABC) == Set(R(1, 2, 3), R(7, 8, 9)))
+  assert(snap2(CPY) == Set(R(1, 2, 3), R(7, 8, 9)))
 }
 }}

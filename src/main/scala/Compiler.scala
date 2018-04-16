@@ -5,17 +5,17 @@ import scala.collection.mutable.ArrayBuffer
 
 
 private class Compiler {
-  val datasets = mutable.Map[Dataset, Node]()
+  val datasets = mutable.Map[Dataset, CompiledTerm]()
   val nodes = ArrayBuffer[Node]()
   val edges = ArrayBuffer[mutable.Set[Edge]]()
 
-  def add(datasets: List[Dataset]): this.type = {
+  def accept(datasets: List[Dataset]): this.type = {
     datasets.foreach(compile)
     this
   }
 
-  def compile() = new Database(
-    datasets = datasets.mapValues(_.id).toMap,
+  def run() = new Database(
+    datasets = datasets.mapValues(_.node.id).toMap,
     nodes = nodes.toVector,
     edges = edges.map(_.toVector).toVector
   )
@@ -28,33 +28,95 @@ private class Compiler {
     case Changing(term, func) => transform(compile(term), func)
     case Expanding(term, schema, func) => expand(compile(term), schema, func)
     case Or(a, b) => add(compile(a), compile(b))
-    case Rename(ds, fields) => CompiledTerm(compile(ds), fields)
+    case Project(term, fields) => project(compile(term), fields)
+    case Rename(term, fields) => CompiledTerm(compile(term).node, fields)
     case Where(term, pred) => filter(compile(term), pred)
-    case _ => throw new RuntimeException("not implemented")
-  }
 
-  private def compile(dataset: Dataset): Node = dataset match {
     case t: Table => compile(t)
+    case s: Statement => compile(s)
     case v: View => compile(v)
   }
 
-  private def compile(table: Table): Node = {
-    datasets.getOrElse(table, add(table, new Source(nextId, Set())))
+
+  private def compile(table: Table): CompiledTerm = {
+    if (!datasets.contains(table)) {
+      val node = register(new Source(nextId, Set()))
+      datasets += (table -> CompiledTerm(node, table.fields))
+    }
+    datasets(table)
   }
 
-  private def compile(view: View): Node = {
+
+  private def compile(view: View): CompiledTerm = {
     if (!datasets.contains(view)) {
-      val viewNode = add(view, new Source(nextId, Set()))
-      connectView(compile(view.body), viewNode, view.fields)
+      val node = register(new Source(nextId, Set()))
+      val result = CompiledTerm(node, inferSchema(view))
+      datasets += (view -> result)
+      val src = compile(view.body)
+      if (src.schema != result.schema) {
+        throw new SchemaError(
+          s"Unexpected schema. Inferred ${result.schema}. Received ${src.schema}"
+        )
+      }
+      connect(src.node, result.node)
     }
     datasets(view)
   }
 
+  private def inferSchema(term: Term): Vector[String] = term match {
+    case t: Table => t.fields
+    case v: View => inferSchema(v.body)
+    case Expanding(_, s, _) => s
+    case Project(_, s) => s
+    case Rename(_, s) => s
+    case Where(t, _) => inferSchema(t)
+    case s: Statement if s.select == Vector(NamedColumn("*")) => inferSchema(s.from)
+    case s: Statement => s.select.map(_.name)
+    case _ => throw new SchemaError(
+      s"Schema inference is not implemented for $term"
+    )
+  }
+
+  private def compile(stmt: Statement): CompiledTerm = {
+    val tmp = compile(stmt.from)
+    val src = stmt.predicate match {
+      case Some(p) => filter(tmp, p)
+      case None => tmp
+    }
+
+    (stmt.select, stmt.groups) match {
+      case (Vector(NamedColumn("*")), Vector()) => return src
+      case (Vector(NamedColumn("*")), _) => throw new SchemaError(
+        "Cannot use both \"SELECT *\" and \"GROUP_BY\" in the same statement"
+      )
+      case (cols, Vector()) if cols.exists(_.isInstanceOf[AggregateColumn]) => {
+        // SHOULD: Support this, if all of the columns are aggregates.
+        throw new SchemaError("Aggregate columns require a \"GROUP_BY\" expression.")
+      }
+      case (cols, Vector()) => {
+        val srcSchema = cols.map {
+          case NamedColumn(a) => a
+          case AliasColumn(a, _) => a.name
+          case _ => throw new SchemaError("Expected non-aggregated columns.")
+        }
+        val dstSchema = cols.map {
+          case NamedColumn(a) => a
+          case AliasColumn(_, a) => a
+          case _ => throw new SchemaError("Expected non-aggregated columns.")
+        }
+        return CompiledTerm(adaptSchema(src, srcSchema), dstSchema)
+      }
+      case (cols, groups) => {
+        throw new RuntimeException("WIP")
+      }
+    }
+  }
+
   private def add(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
     val schema = left.schema.filter { x => right.schema.contains(x) }
-    val node = add(new Add(nextId, Summand(), Summand()))
-    connectNodes(left.node, node, left.schema, schema, isLeftSide = true)
-    connectNodes(right.node, node, right.schema, schema, isLeftSide = false)
+    val node = register(new Add(nextId, Summand(), Summand()))
+    connect(adaptSchema(left, schema), node, isLeftSide = true)
+    connect(adaptSchema(right, schema), node, isLeftSide = false)
     CompiledTerm(node, schema)
   }
 
@@ -63,7 +125,7 @@ private class Compiler {
     schema: Vector[String],
     func: Record => List[Record]
   ): CompiledTerm = {
-    val right = add(new Expand(nextId, wrapExpand(func, left.schema, schema)))
+    val right = register(new Expand(nextId, wrapExpand(func, left.schema, schema)))
     connect(left.node, right)
     CompiledTerm(right, schema)
   }
@@ -87,7 +149,7 @@ private class Compiler {
   }
 
   private def filter(left: CompiledTerm, pred: Record => Boolean): CompiledTerm = {
-    val right = add(new Filter(nextId, wrapPredicate(pred, left.schema)))
+    val right = register(new Filter(nextId, wrapPredicate(pred, left.schema)))
     connect(left.node, right)
     CompiledTerm(right, left.schema)
   }
@@ -97,7 +159,7 @@ private class Compiler {
   }
 
   private def transform(left: CompiledTerm, func: Record => Record): CompiledTerm = {
-    val right = add(new Transform(nextId, wrapTransform(func, left.schema)))
+    val right = register(new Transform(nextId, wrapTransform(func, left.schema)))
     connect(left.node, right)
     CompiledTerm(right, left.schema)
   }
@@ -128,11 +190,15 @@ private class Compiler {
 
     val leftside = Multiplicand(onleft, leftmerge)
     val rightside = Multiplicand(onright, rightmerge)
-    val node = add(new Multiply(nextId, leftside, rightside))
+    val node = register(new Multiply(nextId, leftside, rightside))
 
     connect(left.node, node, isLeftSide = true)
     connect(right.node, node, isLeftSide = false)
     CompiledTerm(node, schema)
+  }
+
+  private def project(term: CompiledTerm, schema: Vector[String]) = {
+    CompiledTerm(adaptSchema(term, schema), schema)
   }
 
   private def subtract(left: CompiledTerm, right: CompiledTerm): CompiledTerm = {
@@ -140,35 +206,25 @@ private class Compiler {
     val both = s1.filter { x => s2.contains(x) }
     val onleft = both.map { x => s1.indexOf(x) }
     val onright = both.map { x => s2.indexOf(x) }
-    val sub = add(new Subtract(nextId, PositiveSide(onleft), NegativeSide(onright)))
+    val sub = register(new Subtract(nextId, PositiveSide(onleft), NegativeSide(onright)))
     connect(left.node, sub, isLeftSide = true)
     connect(right.node, sub, isLeftSide = false)
     CompiledTerm(sub, left.schema)
   }
 
-  private def connectView(term: CompiledTerm, viewNode: Node, schema: Vector[String]) = {
-    connectNodes(term.node, viewNode, term.schema, schema)
-  }
-
-  private def connectNodes(
-    left: Node,
-    right: Node,
-    srcSchema: Vector[String],
-    dstSchema: Vector[String],
-    isLeftSide: Boolean = true
-  ): Unit = {
-    val missing = dstSchema.toSet -- srcSchema.toSet
+  private def adaptSchema(term: CompiledTerm, schema: Vector[String]): Node = {
+    val missing = schema.toSet -- term.schema.toSet
     if (missing.nonEmpty) {
-      throw new SchemaError(s"Cannot connect schema $srcSchema to $dstSchema.")
+      throw new SchemaError(s"Cannot connect schema ${term.schema} to $schema.")
     }
 
-    if (srcSchema == dstSchema) {
-      connect(left, right, isLeftSide)
+    if (term.schema == schema) {
+      term.node
     } else {
-      val cols = dstSchema.map { x => srcSchema.indexOf(x) }
-      val adapter = add(new Transform(nextId, row => cols.map { i => row(i) }))
-      connect(left, adapter)
-      connect(adapter, right, isLeftSide)
+      val cols = schema.map { x => term.schema.indexOf(x) }
+      val adapter = register(new Transform(nextId, row => cols.map { i => row(i) }))
+      connect(term.node, adapter)
+      adapter
     }
   }
 
@@ -176,12 +232,7 @@ private class Compiler {
     edges(source.id) += Edge(target.id, isLeftSide)
   }
 
-  private def add(dataset: Dataset, node: Node): Node = {
-    datasets += (dataset -> node)
-    add(node)
-  }
-
-  private def add(node: Node): Node = {
+  private def register(node: Node): Node = {
     if (node.id != nodes.length || node.id != edges.length) {
       throw new RuntimeException("Internal error. Unexpected node.")
     }
