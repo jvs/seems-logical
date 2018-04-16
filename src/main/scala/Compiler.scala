@@ -37,7 +37,6 @@ private class Compiler {
     case v: View => compile(v)
   }
 
-
   private def compile(table: Table): CompiledTerm = {
     if (!datasets.contains(table)) {
       val node = register(new Source(nextId, Set()))
@@ -45,7 +44,6 @@ private class Compiler {
     }
     datasets(table)
   }
-
 
   private def compile(view: View): CompiledTerm = {
     if (!datasets.contains(view)) {
