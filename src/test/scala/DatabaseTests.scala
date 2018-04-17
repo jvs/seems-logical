@@ -616,19 +616,24 @@ val tests = Tests {
   assert(snap2(Baz) == Set(R(1, 2), R(5, 6), R(2, 1), R(6, 5)))
 }
 
-"Make sure views in a (namespace-style) object can have forward references" - {
+"Make sure objects can act like namespaces" - {
   object Foo {
+    val Zim: View = View("a", "b") requires { Buz("a", "b") or Zim("b", "a") }
     val Bar = Table("a", "b")
     val Fiz = View("a", "b") requires { Bar("a", "b") or Buz("a", "b") }
     val Baz = View("b", "a") requires { Fiz("a", "b") }
     val Buz = Table("a", "b")
   }
-  val start = Database(Foo.Bar, Foo.Fiz, Foo.Baz, Foo.Buz)
+  val start = Database(Foo.Bar, Foo.Fiz, Foo.Baz, Foo.Buz, Foo.Zim)
   val snap1 = start { INSERT INTO Foo.Bar VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Foo.Bar VALUES (3, 4) }
+  val snap3 = snap2 { INSERT INTO Foo.Buz VALUES (1, 2, 3, 4) }
   assert(snap1(Foo.Fiz) == Set(R(1, 2), R(3, 4), R(5, 6)))
   assert(snap1(Foo.Baz) == Set(R(2, 1), R(4, 3), R(6, 5)))
+  assert(snap1(Foo.Zim) == Set())
   assert(snap2(Foo.Fiz) == Set(R(1, 2), R(5, 6)))
   assert(snap2(Foo.Baz) == Set(R(2, 1), R(6, 5)))
+  assert(snap2(Foo.Zim) == Set())
+  assert(snap3(Foo.Zim) == Set(R(1, 2), R(3, 4), R(2, 1), R(4, 3)))
 }
 }}
