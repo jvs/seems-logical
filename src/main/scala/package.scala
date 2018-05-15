@@ -10,6 +10,14 @@ package object logical {
   class Record(val row: Row, val schema: Vector[String]) {
     def apply[A](index: Int): A = row(index).asInstanceOf[A]
     def apply[A](field: String): A = apply[A](schema.indexOf(field))
+
+    def apply(items: (String, Any)*): Record = {
+      val argmap = items.toMap
+      val values = schema.zipWithIndex.map { case (name, index) =>
+        argmap.getOrElse(name, row(index))
+      }
+      new Record(values, schema)
+    }
   }
 
   object Record {

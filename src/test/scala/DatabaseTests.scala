@@ -32,6 +32,20 @@ def assertConsistent(db: Database) = {
 
 
 val tests = Tests {
+"Try updating the fields of a record." - {
+  val a = Record("x" -> 1, "y" -> 2, "z" -> 3, "w" -> 4)
+  val b = a("y" -> 20, "w" -> 400)
+
+  assert(a[Int]("x") == 1)
+  assert(a[Int]("y") == 2)
+  assert(a[Int]("z") == 3)
+  assert(a[Int]("w") == 4)
+
+  assert(b[Int]("x") == 1)
+  assert(b[Int]("y") == 20)
+  assert(b[Int]("z") == 3)
+  assert(b[Int]("w") == 400)
+}
 
 "Make sure DSL seems to create the expected things." - {
   val Scope = Table("id")
@@ -345,6 +359,24 @@ val tests = Tests {
   val snap2 = snap1 { DELETE FROM Bar VALUES (3, 4) }
   assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
   assert(snap2(Baz) == Set(R(7, 6), R(3, 2)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+}
+
+"Try using a simple transform that updates two of the fields." - {
+  val Foo = Table("x", "y", "z", "w")
+  val Bar = View("x", "y", "z", "w") requires {
+    Foo("x", "y", "z", "w") changing { rec => rec(
+      "y" -> rec[Int]("y") * 10,
+      "w" -> rec[Int]("w") * 100
+    )}
+  }
+
+  val start = Database(Bar)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (5, 6, 7, 8) }
+  assert(snap1(Bar) == Set(R(1, 20, 3, 400), R(5, 60, 7, 800), R(9, 100, 11, 1200)))
+  assert(snap2(Bar) == Set(R(1, 20, 3, 400), R(9, 100, 11, 1200)))
   assertConsistent(snap1)
   assertConsistent(snap2)
 }
