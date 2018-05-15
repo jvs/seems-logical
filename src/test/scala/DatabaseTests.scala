@@ -381,6 +381,26 @@ val tests = Tests {
   assertConsistent(snap2)
 }
 
+"Try using a simple transform that adds a field." - {
+  val Foo = Table("x", "y")
+  val Bar = View {
+    Foo("x", "y") changingTo ("x", "y", "z") using {
+      rec => rec ++ Record("z" -> 0)
+    }
+  }
+
+  val start = Database(Bar)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2a = snap1 { DELETE FROM Foo VALUES (1, 2) }
+  val snap2b = snap1 { DELETE FROM Foo VALUES (5, 6) }
+  assert(snap1(Bar) == Set(R(1, 2, 0), R(3, 4, 0), R(5, 6, 0)))
+  assert(snap2a(Bar) == Set(R(3, 4, 0), R(5, 6, 0)))
+  assert(snap2b(Bar) == Set(R(1, 2, 0), R(3, 4, 0)))
+  assertConsistent(snap1)
+  assertConsistent(snap2a)
+  assertConsistent(snap2b)
+}
+
 "Try using a transform that recursively generates many rows." - {
   val Bar = Table("x")
 

@@ -18,6 +18,10 @@ package object logical {
       }
       new Record(values, schema)
     }
+
+    def ++(other: Record): Record = {
+      new Record(row ++ other.row, schema ++ other.schema)
+    }
   }
 
   object Record {
@@ -58,12 +62,13 @@ package object logical {
   val SET_OF = aggFunc("SET_OF")
   val SUM = aggFunc("SUM")
 
-  sealed trait Term { self =>
+  sealed trait Term {
     def and(other: Term): Term = And(this, other)
     def apply(args: String*) = Rename(this, args.toVector)
     def butNot(other: Term): Term = ButNot(this, other)
     def changing(function: Record => Record) = Changing(this, function)
-    def expandingTo(schema: String*) = ExandBuilder(self, schema.toVector)
+    def changingTo(schema: String*) = ChangeBuilder(this, schema.toVector)
+    def expandingTo(schema: String*) = ExandBuilder(this, schema.toVector)
     def or(other: Term): Term = Or(this, other)
     def where(predicate: Record => Boolean): Term = Where(this, predicate)
 
@@ -164,6 +169,13 @@ package object logical {
   }
 
   case class SchemaError(message: String) extends Exception(message)
+
+  case class ChangeBuilder(term: Term, schema: Vector[String]) {
+    def using(function: Record => Record) = {
+      def wrapper(record: Record) = List(function(record))
+      Expanding(term, schema, wrapper)
+    }
+  }
 
   case class ExandBuilder(term: Term, schema: Vector[String]) {
     def using(function: Record => List[Record]) = Expanding(term, schema, function)
