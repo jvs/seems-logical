@@ -117,10 +117,11 @@ object transact {
   ): Database = {
     var current = database
     for (row <- rows) {
-      val rollback = current
       val cast = Broadcast(originator, ArrayBuffer(), ArrayBuffer(row))
-      val next = apply(database, cast)
-      current = if (didDelete(next, originator, row)) next else rollback
+      val next = apply(current, cast)
+      if (didDelete(next, originator, row)) {
+        current = next
+      }
     }
     current
   }
