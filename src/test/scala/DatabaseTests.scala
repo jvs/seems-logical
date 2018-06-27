@@ -688,4 +688,86 @@ val tests = Tests {
   assert(snap2(Foo.Zim) == Set())
   assert(snap3(Foo.Zim) == Set(R(1, 2), R(3, 4), R(2, 1), R(4, 3)))
 }
+
+"Reproduce compiler error seen in the jvc project" - {
+  // SHOULD: Reduce this to a simpler test case.
+  val ChildScope = Table("parent", "child")
+  val Defines = Table("scope", "name", "target")
+  val DefinesParameter = Table("scope", "name")
+  val ImportsAll = Table("scope", "tree", "path")
+  val Mentions = Table("scope", "tree", "name")
+  val PackageScope = Table("path", "scope")
+  val ProtocolScope = Table("outer", "tree", "inner")
+
+  lazy val Ancestor: View = View("ancestor", "descendant") requires (
+    ChildScope("ancestor", "descendant") or (
+      Ancestor("ancestor", "relative") and
+      Ancestor("relative", "descendant")
+    )
+  )
+
+  lazy val Exports: View = View("path", "name", "target") requires (
+    PackageScope("path", "scope")
+    and DirectlyProvides("scope", "name", "target") where { rec => true }
+  )
+
+  lazy val ExposesProtocol: View = View("scope", "name", "target") requires (
+    ProtocolScope("scope", "tree", "inner")
+    and DirectlyProvides("inner", "name", "target") where { rec => true }
+    butNot DefinesParameter("inner", "name")
+    changing { rec => rec }
+  )
+
+  lazy val LocallyRefers: View = View("tree", "name", "scope", "target") requires (
+    Mentions("scope", "tree", "name")
+    and Provides("scope", "name", "target")
+  )
+
+  lazy val DirectlyProvides: View = View("scope", "name", "target") requires (
+    Defines("scope", "name", "target")
+    or ExposesProtocol("scope", "name", "target")
+    or PointlessView("scope", "name", "target")
+    or (
+      PackageScope("path", "scope")
+      and Exports("path", "name", "target")
+    )
+  )
+
+  lazy val Shadows: View = View("scope", "name", "target") requires (
+    DirectlyProvides("scope", "name", "target")
+    and Ancestor("ancestor", "scope")
+    and Provides("ancestor", "name", "other")
+    changing { rec => rec }
+  )
+
+  lazy val Provides: View = View("scope", "name", "target") requires (
+    Shadows("scope", "name", "target")
+    or (
+      DirectlyProvides("scope", "name", "target")
+      butNot Shadows("scope", "name", "_1", "_2")
+    )
+  )
+
+  lazy val Resolves: View = View("scope", "tree", "name", "target") requires (
+    ImportsAll("scope", "tree", "path")
+    and Exports("path", "name", "target")
+    changing { rec => rec }
+  )
+
+  lazy val PointlessView: View = View("scope", "name", "target") requires (
+    Resolves("scope", "_", "name", "target")
+  )
+
+  val start = Database(LocallyRefers, Provides)
+  val snap = start
+    { INSERT INTO PackageScope VALUES (Vector("foo"), 1) } THEN
+    { INSERT INTO ChildScope VALUES (0, 1) } THEN
+    { INSERT INTO Defines VALUES (1, "Bar", "<bar>") } THEN
+    { INSERT INTO ChildScope VALUES (1, 2) } THEN
+    { INSERT INTO ProtocolScope VALUES (1, 2, 2) } THEN
+    { INSERT INTO Defines VALUES (2, "A", "<a>") } THEN
+    { INSERT INTO DefinesParameter VALUES (2, "A") }
+
+  assert(snap(DirectlyProvides) == Set(R(1, "Bar", "<bar>"), R(2, "A", "<a>")))
+}
 }}
