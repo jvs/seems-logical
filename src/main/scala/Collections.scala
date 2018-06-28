@@ -13,6 +13,7 @@ private case class Summand(rows: Set[Row] = Set[Row]()) {
     deleted: ArrayBuffer[Row],
     maybeDeleted: ArrayBuffer[Row]
   ): Summand = {
+    // SHOULD: Complain when we try to delete a row that we don't contain.
     var newRows = rows
 
     for (row <- cast.inserts) {
@@ -196,8 +197,8 @@ private case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
       if (prev == 1) {
         newRows -= row
         deleted += row
-      } else if (prev > 0) {
-        // If the count is positive (basically, not 0), then decrement it.
+      } else if (prev > 1) {
+        // If the count is greater than one, then decrement it.
         newRows += (row -> (prev - 1))
         maybeDeleted += row
       }
