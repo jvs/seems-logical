@@ -55,40 +55,35 @@ object Database {
 
 
 private abstract class Node(val id: Int) {
-  def receive(cast: Broadcast, isLeftSide: Boolean): Response
+  def receive(cast: Broadcast, isLeftSide: Boolean): Broadcast
 }
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
 
 private case class Broadcast(
-  sender: Int,
-  inserts: ArrayBuffer[Row],
-  deletes: ArrayBuffer[Row]
-)
-
-private case class Response(
+  senderId: Int,
   replacement: Option[Node],
   inserts: ArrayBuffer[Row],
   deletes: ArrayBuffer[Row],
-  speculativeDeletes: ArrayBuffer[Row] = ArrayBuffer()
-)
+  speculativeDeletes: ArrayBuffer[Row] = ArrayBuffer())
+{
+  def nonEmpty = inserts.nonEmpty || deletes.nonEmpty || speculativeDeletes.nonEmpty
+}
 
 
 object transact {
   def apply(database: Database, table: Table, row: Row, isInsert: Boolean): Database = {
     val node = database.nodes(database.datasets(table))
     val cast = Broadcast(
-      sender = -1,
+      senderId = -1,
+      replacement = None,
       inserts = if (isInsert) ArrayBuffer(row) else ArrayBuffer(),
-      deletes = if (isInsert) ArrayBuffer() else ArrayBuffer(row)
+      deletes = if (isInsert) ArrayBuffer() else ArrayBuffer(row),
+      speculativeDeletes = ArrayBuffer()
     )
     val resp = node.receive(cast, isInsert)
     val next = database.update(resp.replacement)
-    if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-      apply(next, Broadcast(node.id, resp.inserts, resp.deletes))
-    } else {
-      next
-    }
+    if (resp.nonEmpty) apply(next, resp) else next
   }
 
   def apply(database: Database, broadcast: Broadcast): Database = {
@@ -96,26 +91,15 @@ object transact {
     val broadcasts = Queue[Broadcast](broadcast)
     while (broadcasts.nonEmpty) {
       val cast = broadcasts.dequeue()
-      var specdels = List[(Int, ArrayBuffer[Row])]()
-
-      for (edge <- current.edges(cast.sender)) {
+      for (edge <- current.edges(cast.senderId)) {
         val node = current.nodes(edge.receiver)
         val resp = node.receive(cast, edge.isLeftSide)
         current = current.update(resp.replacement)
-        if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-          broadcasts.enqueue(Broadcast(node.id, resp.inserts, resp.deletes))
+        if (resp.nonEmpty) {
+          broadcasts.enqueue(resp)
         }
-        // SHOULD: Make a Broadcast variant that represents a speculative-delete.
-        // That way the changes can happen in the same sequence as the others.
-        if (resp.speculativeDeletes.nonEmpty) {
-          specdels = specdels :+ (node.id -> resp.speculativeDeletes)
-        }
-      }
-
-      // Flush all the pending speculative-deletes.
-      for ((nodeId, rows) <- specdels) {
-        for (row <- rows) {
-          current = speculativelyDelete(current, nodeId, row)
+        for (row <- cast.speculativeDeletes) {
+          current = speculativelyDelete(current, cast.senderId, row)
         }
       }
     }
@@ -123,7 +107,7 @@ object transact {
   }
 
   private def speculativelyDelete(database: Database, nodeId: Int, row: Row) = {
-    val cast = Broadcast(nodeId, ArrayBuffer(), ArrayBuffer(row))
+    val cast = Broadcast(nodeId, None, ArrayBuffer(), ArrayBuffer(row))
     val next = apply(database, cast)
 
     val didDelete = next.nodes(nodeId) match {
