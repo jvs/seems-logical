@@ -1,6 +1,6 @@
 package seems.logical
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, Queue}
 
 
 class Database(
@@ -70,8 +70,9 @@ private case class Response(
   replacement: Option[Node],
   inserts: ArrayBuffer[Row],
   deletes: ArrayBuffer[Row],
-  maybeDeletes: ArrayBuffer[Row] = ArrayBuffer()
+  speculativeDeletes: ArrayBuffer[Row] = ArrayBuffer()
 )
+
 
 object transact {
   def apply(database: Database, table: Table, row: Row, isInsert: Boolean): Database = {
@@ -92,46 +93,46 @@ object transact {
 
   def apply(database: Database, broadcast: Broadcast): Database = {
     var current = database
-    val broadcasts = ArrayBuffer[Broadcast](broadcast)
-    while (broadcasts.length > 0) {
-      val cast = broadcasts.remove(broadcasts.length - 1)
+    val broadcasts = Queue[Broadcast](broadcast)
+    while (broadcasts.nonEmpty) {
+      val cast = broadcasts.dequeue()
+      var specdels = List[(Int, ArrayBuffer[Row])]()
+
       for (edge <- current.edges(cast.sender)) {
         val node = current.nodes(edge.receiver)
         val resp = node.receive(cast, edge.isLeftSide)
         current = current.update(resp.replacement)
         if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-          broadcasts += Broadcast(node.id, resp.inserts, resp.deletes)
+          broadcasts.enqueue(Broadcast(node.id, resp.inserts, resp.deletes))
         }
-        if (resp.maybeDeletes.nonEmpty) {
-          current = maybeDelete(current, node.id, resp.maybeDeletes)
+        // SHOULD: Make a Broadcast variant that represents a speculative-delete.
+        // That way the changes can happen in the same sequence as the others.
+        if (resp.speculativeDeletes.nonEmpty) {
+          specdels = specdels :+ (node.id -> resp.speculativeDeletes)
+        }
+      }
+
+      // Flush all the pending speculative-deletes.
+      for ((nodeId, rows) <- specdels) {
+        for (row <- rows) {
+          current = speculativelyDelete(current, nodeId, row)
         }
       }
     }
     current
   }
 
-  private def maybeDelete(
-    database: Database,
-    originator: Int,
-    rows: ArrayBuffer[Row]
-  ): Database = {
-    var current = database
-    for (row <- rows) {
-      val cast = Broadcast(originator, ArrayBuffer(), ArrayBuffer(row))
-      val next = apply(current, cast)
-      if (didDelete(next, originator, row)) {
-        current = next
-      }
-    }
-    current
-  }
+  private def speculativelyDelete(database: Database, nodeId: Int, row: Row) = {
+    val cast = Broadcast(nodeId, ArrayBuffer(), ArrayBuffer(row))
+    val next = apply(database, cast)
 
-  private def didDelete(database: Database, nodeId: Int, row: Row): Boolean = {
-    database.nodes(nodeId) match {
+    val didDelete = next.nodes(nodeId) match {
       case a: Add => !a.contains(row)
       case a: Expand => !a.contains(row)
       case a: Transform => !a.contains(row)
       case _ => false
     }
+
+    if (didDelete) next else database
   }
 }
