@@ -3,7 +3,7 @@ package seems.logical
 import scala.collection.mutable.ArrayBuffer
 
 
-case class Summand(rows: Set[Row] = Set[Row]()) {
+private case class Summand(rows: Set[Row] = Set[Row]()) {
   def contains(row: Row) = rows(row)
 
   def update(
@@ -40,7 +40,7 @@ case class Summand(rows: Set[Row] = Set[Row]()) {
 }
 
 
-case class PositiveSide(
+private case class PositiveSide(
   on: Vector[Int],
   groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
 {
@@ -86,7 +86,7 @@ case class PositiveSide(
 }
 
 
-case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
+private case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
   def apply(key: Row) = keys(key)
 
   def update(
@@ -121,7 +121,7 @@ case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
 }
 
 
-case class Multiplicand(
+private case class Multiplicand(
   on: Vector[Int],
   merge: Vector[Int],
   groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
@@ -166,7 +166,7 @@ case class Multiplicand(
 }
 
 
-case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
+private case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
   def contains(row: Row) = rows.contains(row)
   def toSet: Set[Row] = rows.keySet
 
