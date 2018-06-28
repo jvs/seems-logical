@@ -245,7 +245,7 @@ private case class CompiledTerm(node: Node, schema: Vector[String])
 private class Add(id: Int, val left: Summand, val right: Summand) extends Node(id) {
   def contains(row: Row) = left.contains(row) || right.contains(row)
 
-  def receive(cast: Broadcast, isLeftSide: Boolean): Broadcast = {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
@@ -256,7 +256,7 @@ private class Add(id: Int, val left: Summand, val right: Summand) extends Node(i
       left = if (isLeftSide) newTarget else left,
       right = if (isLeftSide) right else newTarget
     )
-    Broadcast(id, Some(repl), inserted, deleted, maybeDeleted)
+    Response(Some(repl), inserted, deleted, maybeDeleted)
   }
 }
 
@@ -277,15 +277,13 @@ private class Expand(
     val deleted = ArrayBuffer[Row]()
     val maybeDeleted = ArrayBuffer[Row]()
     val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
-    val repl = new Expand(id, function, newOutput)
-    Broadcast(id, Some(repl), inserted, deleted, maybeDeleted)
+    Response(Some(new Expand(id, function, newOutput)), inserted, deleted, maybeDeleted)
   }
 }
 
 
 private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean) = Broadcast(
-    senderId = id,
+  def receive(cast: Broadcast, isLeftSide: Boolean) = Response(
     replacement = None,
     inserts = cast.inserts.filter(predicate),
     deletes = cast.deletes.filter(predicate)
@@ -294,7 +292,7 @@ private class Filter(id: Int, predicate: Row => Boolean) extends Node(id) {
 
 
 private class Multiply(id: Int, left: Multiplicand, right: Multiplicand) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean): Broadcast = {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
@@ -304,7 +302,7 @@ private class Multiply(id: Int, left: Multiplicand, right: Multiplicand) extends
       left = if (isLeftSide) newTarget else left,
       right = if (isLeftSide) right else newTarget
     ))
-    Broadcast(id, repl, inserted, deleted)
+    Response(repl, inserted, deleted)
   }
 }
 
@@ -326,25 +324,25 @@ private class Transform(
     val maybeDeleted = ArrayBuffer[Row]()
     val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
     val repl = new Transform(id, function, newOutput)
-    Broadcast(id, Some(repl), inserted, deleted, maybeDeleted)
+    Response(Some(repl), inserted, deleted, maybeDeleted)
   }
 }
 
 
 /** Represents a Table or a View in a database. It is just a set of rows. */
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean): Broadcast = {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val inserted = cast.inserts.filter(x => !rows(x))
     val deleted = cast.deletes.filter(x => rows(x))
     val isNop = inserted.isEmpty && deleted.isEmpty
     val repl = if (isNop) None else Some(new Source(id, rows ++ inserted -- deleted))
-    Broadcast(id, repl, inserted, deleted)
+    Response(repl, inserted, deleted)
   }
 }
 
 
 private class Subtract(id: Int, pos: PositiveSide, neg: NegativeSide) extends Node(id) {
-  def receive(cast: Broadcast, isLeftSide: Boolean): Broadcast = {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
     val repl = if (isLeftSide) {
@@ -354,6 +352,6 @@ private class Subtract(id: Int, pos: PositiveSide, neg: NegativeSide) extends No
       val newNeg = neg.update(cast, pos, inserted, deleted)
       if (newNeg eq neg) None else Some(new Subtract(id, pos, newNeg))
     }
-    Broadcast(id, repl, inserted, deleted)
+    Response(repl, inserted, deleted)
   }
 }
