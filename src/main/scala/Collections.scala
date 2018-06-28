@@ -28,11 +28,14 @@ private case class Summand(rows: Set[Row] = Set[Row]()) {
     }
 
     for (row <- cast.deletes) {
-      newRows -= row
-      if (otherSide.rows(row)) {
-        maybeDeleted += row
-      } else {
-        deleted += row
+      if (newRows(row)) {
+        newRows -= row
+
+        if (otherSide.rows(row)) {
+          maybeDeleted += row
+        } else {
+          deleted += row
+        }
       }
     }
 
@@ -59,7 +62,7 @@ private case class PositiveSide(
       val group = newGroups.getOrElse(key, Set())
       if (!group.contains(row)) {
         newGroups += (key -> (group + row))
-        if (!neg(key)) {
+        if (neg(key).isEmpty) {
           inserted += row
         }
       }
@@ -75,7 +78,7 @@ private case class PositiveSide(
           } else {
             newGroups += (key -> (group - row))
           }
-          if (!neg(key)) {
+          if (neg(key).isEmpty) {
             deleted += row
           }
         }
@@ -87,8 +90,11 @@ private case class PositiveSide(
 }
 
 
-private case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
-  def apply(key: Row) = keys(key)
+private case class NegativeSide(
+  on: Vector[Int],
+  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
+{
+  def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
 
   def update(
     cast: Broadcast,
@@ -96,11 +102,14 @@ private case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
     inserted: ArrayBuffer[Row],
     deleted: ArrayBuffer[Row]
   ): NegativeSide = {
-    var newKeys = keys
+    var newGroups = groups
     for (row <- cast.inserts) {
       val key = on.map { i => row(i) }
-      if (!newKeys(key)) {
-        newKeys += key
+      val group = newGroups.getOrElse(key, Set())
+      if (!group.contains(row)) {
+        newGroups += (key -> (group + row))
+      }
+      if (group.isEmpty) {
         for (other <- pos(key)) {
           deleted += other
         }
@@ -109,15 +118,22 @@ private case class NegativeSide(on: Vector[Int], keys: Set[Row] = Set[Row]()) {
 
     for (row <- cast.deletes) {
       val key = on.map { i => row(i) }
-      if (newKeys(key)) {
-        newKeys -= key
-        for (other <- pos(key)) {
-          inserted += other
+      if (newGroups.contains(key)) {
+        val group = newGroups(key)
+        if (group.contains(row)) {
+          if (group.size > 1) {
+            newGroups += (key -> (group - row))
+          } else {
+            newGroups -= key
+            for (other <- pos(key)) {
+              inserted += other
+            }
+          }
         }
       }
     }
 
-    if (newKeys eq keys) this else NegativeSide(on, newKeys)
+    return if (newGroups eq groups) this else NegativeSide(on, newGroups)
   }
 }
 

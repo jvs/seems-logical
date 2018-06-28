@@ -759,7 +759,7 @@ val tests = Tests {
   )
 
   val start = Database(LocallyRefers, Provides)
-  val snap = start
+  val snap1 = start
     { INSERT INTO PackageScope VALUES (Vector("foo"), 1) } THEN
     { INSERT INTO ChildScope VALUES (0, 1) } THEN
     { INSERT INTO Defines VALUES (1, "Bar", "<bar>") } THEN
@@ -768,6 +768,40 @@ val tests = Tests {
     { INSERT INTO Defines VALUES (2, "A", "<a>") } THEN
     { INSERT INTO DefinesParameter VALUES (2, "A") }
 
-  assert(snap(DirectlyProvides) == Set(R(1, "Bar", "<bar>"), R(2, "A", "<a>")))
+  assert(snap1(DirectlyProvides) == Set(R(1, "Bar", "<bar>"), R(2, "A", "<a>")))
+  assertConsistent(snap1)
+
+  val snap2 = start
+    { INSERT INTO DefinesParameter VALUES (2, "A") } THEN
+    { INSERT INTO Defines VALUES (2, "A", "<a>") } THEN
+    { INSERT INTO ProtocolScope VALUES (1, 2, 2) } THEN
+    { INSERT INTO ChildScope VALUES (1, 2) } THEN
+    { INSERT INTO Defines VALUES (1, "Bar", "<bar>") } THEN
+    { INSERT INTO ChildScope VALUES (0, 1) } THEN
+    { INSERT INTO PackageScope VALUES (Vector("foo"), 1) }
+
+  assertSame(snap1, snap2)
+  assertConsistent(snap2)
+}
+
+"Try deleting a row involved in a collision on the negative side" - {
+  val Positive = Table("name", "age")
+  val Negative = Table("name", "count")
+  val Allowed = View("name", "age") {
+    Positive("name", "age") butNot Negative("name", "count")
+  }
+
+  val start = Database(Allowed)
+  val snap1 = start { INSERT INTO Positive VALUES ("foo", 1, "bar", 2) }
+  val snap2 = snap1 { INSERT INTO Negative VALUES ("bar", 3, "bar", 4) }
+  val snap3 = snap2 { DELETE FROM Negative VALUES ("bar", 3) }
+
+  assert(snap1(Allowed) == Set(R("foo", 1), R("bar", 2)))
+  assert(snap2(Allowed) == Set(R("foo", 1)))
+  assert(snap3(Allowed) == Set(R("foo", 1)))
+
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
 }
 }}
