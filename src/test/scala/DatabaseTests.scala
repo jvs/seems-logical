@@ -804,4 +804,37 @@ val tests = Tests {
   assertConsistent(snap2)
   assertConsistent(snap3)
 }
+
+"Try overflowing the stack with speculative deletes" - {
+  val Leader = Table("level")
+  lazy val World: View = View("level") requires {
+    Leader("level") or {
+      World("level") expandingTo ("level") using { rec =>
+        val level = rec[Int]("level")
+        if (level > 0) {
+          List(Record("level" -> level), Record("level" -> (level - 1)))
+        } else {
+          List(Record("level" -> level))
+        }
+      }
+    }
+  }
+
+  // First, make sure the basics work as expected.
+  val start = Database(World)
+  val snap1 = start { INSERT INTO Leader VALUES (10, 3) }
+  val snap2a = snap1 { DELETE FROM Leader VALUES (3) }
+  val snap2b = snap1 { DELETE FROM Leader VALUES (10) }
+
+  assert(start(World) == Set())
+  assert(snap1(World) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap2a(World) == Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(i => R(i)))
+  assert(snap2b(World) == Set(0, 1, 2, 3).map(i => R(i)))
+
+  // Now try kicking off a long chain of speculative deletes.
+  val snapX = start { INSERT INTO Leader VALUES (5000, 1) }
+  val snapY = snapX { DELETE FROM Leader VALUES (5000) }
+
+  assert(snapY(World) == Set(R(0), R(1)))
+}
 }}
