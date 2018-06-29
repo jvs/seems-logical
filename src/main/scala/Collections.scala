@@ -1,6 +1,6 @@
 package seems.logical
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, Queue}
 
 
 private case class Summand(rows: Set[Row] = Set[Row]()) {
@@ -11,7 +11,7 @@ private case class Summand(rows: Set[Row] = Set[Row]()) {
     otherSide: Summand,
     inserted: ArrayBuffer[Row],
     deleted: ArrayBuffer[Row],
-    maybeDeleted: ArrayBuffer[Row]
+    maybeDeleted: Queue[Row]
   ): Summand = {
     // SHOULD: Complain when we try to delete a row that we don't contain.
     var newRows = rows
@@ -191,7 +191,7 @@ private case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
     cast: Broadcast,
     inserted: ArrayBuffer[Row],
     deleted: ArrayBuffer[Row],
-    maybeDeleted: ArrayBuffer[Row]
+    maybeDeleted: Queue[Row]
   ) = {
     var newRows = rows
 

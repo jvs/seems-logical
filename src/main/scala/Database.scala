@@ -60,79 +60,104 @@ private abstract class Node(val id: Int) {
 
 private case class Edge(receiver: Int, isLeftSide: Boolean)
 
+
+private sealed trait Command
+
 private case class Broadcast(
   sender: Int,
   inserts: ArrayBuffer[Row],
   deletes: ArrayBuffer[Row]
-)
+) extends Command
+
+
+private case class Speculate(val nodeId: Int, val rows: Queue[Row]) extends Command
+private case class Verify(rollback: Database, nodeId: Int, row: Row) extends Command
+
 
 private case class Response(
   replacement: Option[Node],
   inserts: ArrayBuffer[Row],
   deletes: ArrayBuffer[Row],
-  speculativeDeletes: ArrayBuffer[Row] = ArrayBuffer()
+  speculativeDeletes: Queue[Row] = Queue()
 )
 
 
 object transact {
   def apply(database: Database, table: Table, row: Row, isInsert: Boolean): Database = {
+    // This logic is much more natural as a few mututally recursive functions.
+    // But then many interesting logic programs could easliy overflow the stack.
+    // So this function uses a big ugly loop to avoid using the call stack.
+    var current = database
+    var stack = List[Command]()
+
+    def push(cmd: Command): Unit = {
+      stack = cmd +: stack
+    }
+
     val node = database.nodes(database.datasets(table))
     val cast = Broadcast(
       sender = -1,
       inserts = if (isInsert) ArrayBuffer(row) else ArrayBuffer(),
       deletes = if (isInsert) ArrayBuffer() else ArrayBuffer(row)
     )
-    val resp = node.receive(cast, isInsert)
-    val next = database.update(resp.replacement)
+
+    val resp = node.receive(cast, true)
+    current = current.update(resp.replacement)
+    if (resp.speculativeDeletes.nonEmpty) {
+      push(Speculate(node.id, resp.speculativeDeletes))
+    }
     if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-      apply(next, Broadcast(node.id, resp.inserts, resp.deletes))
-    } else {
-      next
+      push(Broadcast(node.id, resp.inserts, resp.deletes))
     }
-  }
 
-  def apply(database: Database, broadcast: Broadcast): Database = {
-    var current = database
-    val broadcasts = Queue[Broadcast](broadcast)
-    while (broadcasts.nonEmpty) {
-      val cast = broadcasts.dequeue()
-      var specdels = List[(Int, ArrayBuffer[Row])]()
-
-      for (edge <- current.edges(cast.sender)) {
-        val node = current.nodes(edge.receiver)
-        val resp = node.receive(cast, edge.isLeftSide)
-        current = current.update(resp.replacement)
-        if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
-          broadcasts.enqueue(Broadcast(node.id, resp.inserts, resp.deletes))
+    while (stack.nonEmpty) {
+      val cmd = stack.head
+      stack = stack.tail
+      cmd match {
+        case b: Broadcast => {
+          val queue = Queue[Broadcast](b)
+          while (queue.nonEmpty) {
+            val next = queue.dequeue()
+            for (edge <- current.edges(next.sender)) {
+              val node = current.nodes(edge.receiver)
+              val resp = node.receive(next, edge.isLeftSide)
+              current = current.update(resp.replacement)
+              if (resp.speculativeDeletes.nonEmpty) {
+                push(Speculate(node.id, resp.speculativeDeletes))
+              }
+              if (resp.inserts.nonEmpty || resp.deletes.nonEmpty) {
+                queue.enqueue(Broadcast(node.id, resp.inserts, resp.deletes))
+              }
+            }
+          }
         }
-        // SHOULD: Make a Broadcast variant that represents a speculative-delete.
-        // That way the changes can happen in the same sequence as the others.
-        if (resp.speculativeDeletes.nonEmpty) {
-          specdels = specdels :+ (node.id -> resp.speculativeDeletes)
+        case s: Speculate => {
+          val row = s.rows.dequeue()
+          if (s.rows.nonEmpty) {
+            push(s)
+          }
+          if (contains(current, s.nodeId, row)) {
+            push(Verify(current, s.nodeId, row))
+            push(Broadcast(s.nodeId, ArrayBuffer(), ArrayBuffer(row)))
+          }
+        }
+        case Verify(rollback, nodeId, row) => {
+          if (contains(current, nodeId, row)) {
+            current = rollback
+          }
         }
       }
-
-      // Flush all the pending speculative-deletes.
-      for ((nodeId, rows) <- specdels) {
-        for (row <- rows) {
-          current = speculativelyDelete(current, nodeId, row)
-        }
-      }
     }
+
     current
   }
 
-  private def speculativelyDelete(database: Database, nodeId: Int, row: Row) = {
-    val cast = Broadcast(nodeId, ArrayBuffer(), ArrayBuffer(row))
-    val next = apply(database, cast)
-
-    val didDelete = next.nodes(nodeId) match {
-      case a: Add => !a.contains(row)
-      case a: Expand => !a.contains(row)
-      case a: Transform => !a.contains(row)
-      case _ => false
+  private def contains(current: Database, nodeId: Int, row: Row): Boolean = {
+    current.nodes(nodeId) match {
+      case a: Add => a.contains(row)
+      case a: Expand => a.contains(row)
+      case a: Transform => a.contains(row)
+      case _ => true
     }
-
-    if (didDelete) next else database
   }
 }

@@ -1,7 +1,7 @@
 package seems.logical
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, Queue}
 
 
 private class Compiler {
@@ -249,7 +249,7 @@ private class Add(id: Int, val left: Summand, val right: Summand) extends Node(i
     val (target, other) = if (isLeftSide) (left, right) else (right, left)
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val maybeDeleted = ArrayBuffer[Row]()
+    val maybeDeleted = Queue[Row]()
     val newTarget = target.update(cast, other, inserted, deleted, maybeDeleted)
     val repl = new Add(
       id = id,
@@ -275,7 +275,7 @@ private class Expand(
     )
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val maybeDeleted = ArrayBuffer[Row]()
+    val maybeDeleted = Queue[Row]()
     val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
     Response(Some(new Expand(id, function, newOutput)), inserted, deleted, maybeDeleted)
   }
@@ -321,7 +321,7 @@ private class Transform(
     )
     val inserted = ArrayBuffer[Row]()
     val deleted = ArrayBuffer[Row]()
-    val maybeDeleted = ArrayBuffer[Row]()
+    val maybeDeleted = Queue[Row]()
     val newOutput = output.update(cooked, inserted, deleted, maybeDeleted)
     val repl = new Transform(id, function, newOutput)
     Response(Some(repl), inserted, deleted, maybeDeleted)
