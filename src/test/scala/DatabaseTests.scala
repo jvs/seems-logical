@@ -837,4 +837,22 @@ val tests = Tests {
 
   assert(snapY(World) == Set(R(0), R(1)))
 }
+
+"Make sure that columns named '_' are dropped" - {
+  val Left = Table("color", "count", "status")
+  val Right = Table("color", "count", "status")
+  val Sides = View("color", "status1", "status2") {
+    Left("color", "_", "status1") and Right("color", "_", "status2")
+  }
+  val start = Database(Sides)
+  val snap = start {
+    INSERT INTO Left VALUES ("red", "1", "found", "blue", 2, "found")
+  } THEN {
+    INSERT INTO Right VALUES ("red", "2", "running", "blue", 1, "waiting")
+  }
+  assert(snap(Sides) == Set(
+    R("red", "found", "running"),
+    R("blue", "found", "waiting")
+  ))
+}
 }}

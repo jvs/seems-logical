@@ -100,12 +100,13 @@ package object logical {
 
   case class And(left: Term, right: Term) extends Term {
     lazy val schema = {
-      left.schema ++ right.schema.filter { x => !left.schema.contains(x) }
+      val all = left.schema ++ right.schema.filter { x => !left.schema.contains(x) }
+      all.filter { c => c != "_" }
     }
   }
 
   case class ButNot(left: Term, right: Term) extends Term {
-    lazy val schema = left.schema
+    lazy val schema = left.schema.filter { c => c != "_" }
   }
 
   case class Changing(term: Term, transform: Record => Record) extends Term {

@@ -126,7 +126,8 @@ private class Compiler {
 
   private def compile(term: And): CompiledTerm = {
     val schema = term.schema
-    val (left, right) = (compile(term.left), compile(term.right))
+    val left = removeAnonymousColumns(compile(term.left))
+    val right = removeAnonymousColumns(compile(term.right))
     val (s1, s2) = (left.schema, right.schema)
 
     val both = s1.filter { x => s2.contains(x) }
@@ -176,7 +177,8 @@ private class Compiler {
   }
 
   private def compile(term: ButNot): CompiledTerm = {
-    val (left, right) = (compile(term.left), compile(term.right))
+    val left = removeAnonymousColumns(compile(term.left))
+    val right = removeAnonymousColumns(compile(term.right))
     val (s1, s2) = (left.schema, right.schema)
     val both = s1.filter { x => s2.contains(x) }
     val onleft = both.map { x => s1.indexOf(x) }
@@ -235,6 +237,11 @@ private class Compiler {
     // Create the adjacency-set for this node.
     edges += mutable.Set[Edge]()
     node
+  }
+
+  private def removeAnonymousColumns(term: CompiledTerm): CompiledTerm = {
+    val schema = term.schema.filter { x => x != "_" }
+    if (schema == term.schema) term else CompiledTerm(adaptSchema(term, schema), schema)
   }
 }
 
