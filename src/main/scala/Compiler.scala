@@ -15,7 +15,7 @@ private class Compiler {
     this
   }
 
-  def run() = new Database(
+  def run() = new Book(
     datasets = datasets.mapValues(_.node.id).toMap,
     nodes = nodes.toVector,
     edges = edges.map(_.toVector).toVector

@@ -3,7 +3,7 @@ package seems.logical
 import scala.collection.mutable.{ArrayBuffer, Queue}
 
 
-class Database(
+class Book(
   private [logical] val datasets: Map[Dataset, Int],
   private [logical] val nodes: Vector[Node],
   private [logical] val edges: Vector[Vector[Edge]])
@@ -17,18 +17,18 @@ class Database(
     }
   }
 
-  def apply(stmt: InsertStatement): Database = {
+  def apply(stmt: InsertStatement): Book = {
     update(stmt.table, stmt.values, isInsert = true)
   }
 
-  def apply(stmt: DeleteStatement): Database = {
+  def apply(stmt: DeleteStatement): Book = {
     update(stmt.table, stmt.values, isInsert = false)
   }
 
   def THEN(stmt: InsertStatement) = apply(stmt)
   def THEN(stmt: DeleteStatement) = apply(stmt)
 
-  private def update(table: Table, values: Vector[Any], isInsert: Boolean): Database = {
+  private def update(table: Table, values: Vector[Any], isInsert: Boolean): Book = {
     val expected = table.schema.length
     if (values.length % expected != 0) {
       throw new RuntimeException(
@@ -36,19 +36,19 @@ class Database(
       )
     }
     values.grouped(expected).foldLeft(this) {
-      case (db, row) => transact(db, table, row, isInsert)
+      case (book, row) => transact(book, table, row, isInsert)
     }
   }
 
-  private [logical] def update(node: Option[Node]): Database = node match {
-    case Some(n) => new Database(datasets, nodes.updated(n.id, n), edges)
+  private [logical] def update(node: Option[Node]): Book = node match {
+    case Some(n) => new Book(datasets, nodes.updated(n.id, n), edges)
     case None => this
   }
 }
 
 
-object Database {
-  def apply(datasets: Dataset*): Database = {
+object Book {
+  def apply(datasets: Dataset*): Book = {
     new Compiler().accept(datasets).run()
   }
 }
@@ -71,7 +71,7 @@ private case class Broadcast(
 
 
 private case class Speculate(val nodeId: Int, val rows: Queue[Row]) extends Command
-private case class Verify(rollback: Database, nodeId: Int, row: Row) extends Command
+private case class Verify(rollback: Book, nodeId: Int, row: Row) extends Command
 
 
 private case class Response(
@@ -83,7 +83,7 @@ private case class Response(
 
 
 object transact {
-  def apply(database: Database, table: Table, row: Row, isInsert: Boolean): Database = {
+  def apply(database: Book, table: Table, row: Row, isInsert: Boolean): Book = {
     // This logic is much more natural as a few mututally recursive functions.
     // But then many interesting logic programs could easliy overflow the stack.
     // So this function uses a big ugly loop to avoid using the call stack.
@@ -152,7 +152,7 @@ object transact {
     current
   }
 
-  private def contains(current: Database, nodeId: Int, row: Row): Boolean = {
+  private def contains(current: Book, nodeId: Int, row: Row): Boolean = {
     current.nodes(nodeId) match {
       case a: Add => a.contains(row)
       case a: Expand => a.contains(row)

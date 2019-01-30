@@ -9,25 +9,25 @@ object R {
 
 object DslTests extends TestSuite {
 
-def rederive(db: Database): Database = {
-  var result = Database(db.datasetDefs.toVector:_*)
-  for (k <- db.tableDefs) {
-    for (row <- db(k)) {
+def rederive(book: Book): Book = {
+  var result = Book(book.datasetDefs.toVector:_*)
+  for (k <- book.tableDefs) {
+    for (row <- book(k)) {
       result = result { INSERT INTO k VALUES (row:_*) }
     }
   }
   result
 }
 
-def assertSame(a: Database, b: Database) = {
+def assertSame(a: Book, b: Book) = {
   assert(a.datasetDefs == b.datasetDefs)
   for (k <- a.datasetDefs) {
     assert(a(k) == b(k))
   }
 }
 
-def assertConsistent(db: Database) = {
-  assertSame(db, rederive(db))
+def assertConsistent(book: Book) = {
+  assertSame(book, rederive(book))
 }
 
 
@@ -73,7 +73,7 @@ val tests = Tests {
   val Likes = Table("x", "y")
   val Friends = View("x", "y") { Likes("x", "y") or Likes("y", "x") }
 
-  val start = Database(Friends, Likes)
+  val start = Book(Friends, Likes)
   val snap1 = start { INSERT INTO Likes VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Likes VALUES (3, 4) }
   assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
@@ -96,7 +96,7 @@ val tests = Tests {
   lazy val Friends: View = View("x", "y") { Likes("x", "y") or Friends("y", "x") }
 
   // Everything is the same as before:
-  val start = Database(Friends, Likes)
+  val start = Book(Friends, Likes)
   val snap1 = start { INSERT INTO Likes VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Likes VALUES (3, 4) }
   assert(snap1(Likes) == Set(R(1, 2), R(3, 4), R(5, 6)))
@@ -121,7 +121,7 @@ val tests = Tests {
     Bar("x", "yz") and Baz("yz", "w")
   }
 
-  val start = Database(Bar, Baz, Fiz)
+  val start = Book(Bar, Baz, Fiz)
   val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { INSERT INTO Baz VALUES (2, 3, 6, 7) }
   val snap3 = snap2
@@ -149,7 +149,7 @@ val tests = Tests {
   val Foo = Table("x", "y", "z")
   val Bar = View("x", "y") requires { Foo("x", "y", "z") }
 
-  val snap1 = Database(Bar) {
+  val snap1 = Book(Bar) {
     INSERT INTO Foo VALUES (1, 2, 3, 1, 2, 4, 2, 3, 4)
   }
   val snap2 = snap1 { DELETE FROM Foo VALUES (1, 2, 4) }
@@ -172,7 +172,7 @@ val tests = Tests {
   val Foo = Table("x", "y")
   val Bar = View("x", "y") requires { Foo("x", "y") or Foo("x", "y") }
 
-  val snap1 = Database(Bar) {
+  val snap1 = Book(Bar) {
     INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6)
   }
   val snap2 = snap1 { DELETE FROM Foo VALUES (3, 4) }
@@ -215,7 +215,7 @@ val tests = Tests {
     }
   }
 
-  val start = Database(Ancestor, Siblings)
+  val start = Book(Ancestor, Siblings)
 
   val snap1 = start {
     INSERT INTO Father VALUES (
@@ -333,7 +333,7 @@ val tests = Tests {
     }
   }
 
-  val start = Database(Bar, Baz)
+  val start = Book(Bar, Baz)
   val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Bar VALUES (3, 4) }
   assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
@@ -354,7 +354,7 @@ val tests = Tests {
   }
 
   // The rest is the same as before.
-  val start = Database(Bar, Baz)
+  val start = Book(Bar, Baz)
   val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Bar VALUES (3, 4) }
   assert(snap1(Baz) == Set(R(7, 6), R(5, 4), R(3, 2)))
@@ -372,7 +372,7 @@ val tests = Tests {
     )}
   }
 
-  val start = Database(Bar)
+  val start = Book(Bar)
   val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) }
   val snap2 = snap1 { DELETE FROM Foo VALUES (5, 6, 7, 8) }
   assert(snap1(Bar) == Set(R(1, 20, 3, 400), R(5, 60, 7, 800), R(9, 100, 11, 1200)))
@@ -389,7 +389,7 @@ val tests = Tests {
     }
   }
 
-  val start = Database(Bar)
+  val start = Book(Bar)
   val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
   val snap2a = snap1 { DELETE FROM Foo VALUES (1, 2) }
   val snap2b = snap1 { DELETE FROM Foo VALUES (5, 6) }
@@ -411,7 +411,7 @@ val tests = Tests {
     })
   }
 
-  val start = Database(Bar, Baz)
+  val start = Book(Bar, Baz)
   val snap1 = start { INSERT INTO Bar VALUES 10 }
   val snap2 = snap1 { INSERT INTO Bar VALUES 9 }
   val snap3 = snap2 { DELETE FROM Bar VALUES 10 }
@@ -448,7 +448,7 @@ val tests = Tests {
     }
   }
 
-  val start = Database(Bar, Baz)
+  val start = Book(Bar, Baz)
   val snap1 = start { INSERT INTO Bar VALUES (1, 2, 3, 4, 5, 6, 7, 8) }
   val snap2 = snap1 { DELETE FROM Bar VALUES (5, 6, 7, 8) }
   assert(snap1(Baz) == Set(
@@ -481,7 +481,7 @@ val tests = Tests {
     Other("some-other-airline", "from", "to")
   }
 
-  val snap1 = Database(Flights, Reaches, Other, OnlyUA) {
+  val snap1 = Book(Flights, Reaches, Other, OnlyUA) {
     INSERT INTO Flights VALUES (
       "UA", "SF", "DEN",
       "AA", "SF", "DAL",
@@ -569,7 +569,7 @@ val tests = Tests {
   val Approved2 = View("id", "name") { Maybe2("id", "name") butNot Banned("id", "name") }
   val Approved = View("id", "name") { Approved1("id", "name") or Approved2("id", "name") }
 
-  val snap1 = Database(Approved)
+  val snap1 = Book(Approved)
     { INSERT INTO Banned VALUES (1, "A", 2, "B") }
     { INSERT INTO Maybe1 VALUES (1, "A", 3, "C") }
     { INSERT INTO Maybe2 VALUES (1, "A", 4, "D") }
@@ -595,7 +595,7 @@ val tests = Tests {
     Root("x") or (Catch("x") and Lock("x"))
   }
 
-  val snap1 = Database(Catch) { INSERT INTO Root VALUES (1, 2, 3) }
+  val snap1 = Book(Catch) { INSERT INTO Root VALUES (1, 2, 3) }
   val snap2 = snap1 { INSERT INTO Lock VALUES (2, 3) }
   val snap3a = snap2 { DELETE FROM Root VALUES 2 }
   val snap3b = snap2 { DELETE FROM Lock VALUES 2 }
@@ -631,7 +631,7 @@ val tests = Tests {
   val AB = Table("a", "b")
   val BA = View("b", "a") { AB("a", "b") }
 
-  val start = Database(BA)
+  val start = Book(BA)
   val snap1 = start { INSERT INTO AB VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM AB VALUES (3, 4) }
   assert(snap1(AB) == Set(R(1, 2), R(3, 4), R(5, 6)))
@@ -644,7 +644,7 @@ val tests = Tests {
   val ABC = Table("a", "b", "c")
   val CPY = View(SELECT ("*") FROM ABC)
 
-  val start = Database(ABC, CPY)
+  val start = Book(ABC, CPY)
   val snap1 = start { INSERT INTO ABC VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9) }
   val snap2 = snap1 { DELETE FROM ABC VALUES (4, 5, 6) }
   assert(snap1(ABC) == Set(R(1, 2, 3), R(4, 5, 6), R(7, 8, 9)))
@@ -657,7 +657,7 @@ val tests = Tests {
   val Foo = Table("a", "b")
   lazy val Bar: View = View("a", "b") { Foo("b", "a") or Baz("a", "b") }
   lazy val Baz: View = View("a", "b") { Foo("a", "b") or Bar("b", "a") }
-  val start = Database(Foo, Bar, Baz)
+  val start = Book(Foo, Bar, Baz)
   val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Foo VALUES (3, 4) }
   assert(snap1(Foo) == Set(R(1, 2), R(3, 4), R(5, 6)))
@@ -676,7 +676,7 @@ val tests = Tests {
     val Baz = View("b", "a") requires { Fiz("a", "b") }
     val Buz = Table("a", "b")
   }
-  val start = Database(Foo.Bar, Foo.Fiz, Foo.Baz, Foo.Buz, Foo.Zim)
+  val start = Book(Foo.Bar, Foo.Fiz, Foo.Baz, Foo.Buz, Foo.Zim)
   val snap1 = start { INSERT INTO Foo.Bar VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Foo.Bar VALUES (3, 4) }
   val snap3 = snap2 { INSERT INTO Foo.Buz VALUES (1, 2, 3, 4) }
@@ -758,7 +758,7 @@ val tests = Tests {
     Resolves("scope", "_", "name", "target")
   )
 
-  val start = Database(LocallyRefers, Provides)
+  val start = Book(LocallyRefers, Provides)
   val snap1 = start
     { INSERT INTO PackageScope VALUES (Vector("foo"), 1) } THEN
     { INSERT INTO ChildScope VALUES (0, 1) } THEN
@@ -791,7 +791,7 @@ val tests = Tests {
     Positive("name", "age") butNot Negative("name", "count")
   }
 
-  val start = Database(Allowed)
+  val start = Book(Allowed)
   val snap1 = start { INSERT INTO Positive VALUES ("foo", 1, "bar", 2) }
   val snap2 = snap1 { INSERT INTO Negative VALUES ("bar", 3, "bar", 4) }
   val snap3 = snap2 { DELETE FROM Negative VALUES ("bar", 3) }
@@ -821,7 +821,7 @@ val tests = Tests {
   }
 
   // First, make sure the basics work as expected.
-  val start = Database(World)
+  val start = Book(World)
   val snap1 = start { INSERT INTO Leader VALUES (10, 3) }
   val snap2a = snap1 { DELETE FROM Leader VALUES (3) }
   val snap2b = snap1 { DELETE FROM Leader VALUES (10) }
@@ -844,7 +844,7 @@ val tests = Tests {
   val Sides = View("color", "status1", "status2") {
     Left("color", "_", "status1") and Right("color", "_", "status2")
   }
-  val start = Database(Sides)
+  val start = Book(Sides)
   val snap = start {
     INSERT INTO Left VALUES ("red", "1", "found", "blue", 2, "found")
   } THEN {
@@ -864,7 +864,7 @@ val tests = Tests {
     GROUP_BY "a"
   )
 
-  val start = Database(Foo, Agg)
+  val start = Book(Foo, Agg)
   val snap1 = start {
     INSERT INTO Foo VALUES (
       "x", 1, 1,
@@ -909,7 +909,7 @@ val tests = Tests {
     FROM Foo
     GROUP_BY ("a", "c")
   )
-  val start = Database(Foo, Agg)
+  val start = Book(Foo, Agg)
   val snap1 = start {
     INSERT INTO Foo VALUES (
       "a", 1, true, 1,
@@ -951,6 +951,8 @@ val tests = Tests {
     R("a", 4, false, 10),
     R("b", 10, true, 1)
   ))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try MIN and MAX aggregate functions" - {
@@ -960,7 +962,7 @@ val tests = Tests {
     FROM Foo
     GROUP_BY "a"
   )
-  val start = Database(Foo, Agg)
+  val start = Book(Foo, Agg)
   val snap1 = start {
     INSERT INTO Foo VALUES (
       "x", 1,
@@ -1000,12 +1002,14 @@ val tests = Tests {
     R("x", 2, 4, 9, 3),
     R("y", -2, -1, -3, 2)
   ))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 
 "Try aggregate functions with no groups" - {
   val Foo = Table("a")
   val Agg = View(SELECT (MIN("a"), MAX("a")) FROM Foo)
-  val start = Database(Foo, Agg)
+  val start = Book(Foo, Agg)
   val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
   val snap2 = snap1 { DELETE FROM Foo VALUES (1, 6) }
   val snap3 = snap2 { INSERT INTO Foo VALUES (0, 10) }
@@ -1014,15 +1018,21 @@ val tests = Tests {
   assert(snap2(Agg) == Set(R(2, 5)))
   assert(snap3(Agg) == Set(R(0, 10)))
   assert(snap4(Agg) == Set(R(0, 10)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+  assertConsistent(snap4)
 }
 
 "Try using COUNT(*) with no groups" - {
   val Foo = Table("a", "b")
   val Agg = View(SELECT (COUNT("*")) FROM Foo)
-  val start = Database(Foo, Agg)
+  val start = Book(Foo, Agg)
   val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) }
   val snap2 = snap1 { DELETE FROM Foo VALUES (1, 2, 3, 4) }
   assert(snap1(Agg) == Set(R(5)))
   assert(snap2(Agg) == Set(R(3)))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
 }
 }}
