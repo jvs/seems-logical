@@ -3,7 +3,7 @@ package seems.logical
 import scala.collection.mutable.{ArrayBuffer, Queue}
 
 
-private case class Summand(rows: Set[Row] = Set[Row]()) {
+private case class Summand(rows: Set[Row] = Set()) {
   def contains(row: Row) = rows(row)
 
   def update(
@@ -46,7 +46,7 @@ private case class Summand(rows: Set[Row] = Set[Row]()) {
 
 private case class PositiveSide(
   on: Vector[Int],
-  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
+  groups: Map[Row, Set[Row]] = Map())
 {
   def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
 
@@ -90,10 +90,7 @@ private case class PositiveSide(
 }
 
 
-private case class NegativeSide(
-  on: Vector[Int],
-  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
-{
+private case class NegativeSide(on: Vector[Int], groups: Map[Row, Set[Row]] = Map()) {
   def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
 
   def update(
@@ -141,7 +138,7 @@ private case class NegativeSide(
 private case class Multiplicand(
   on: Vector[Int],
   merge: Vector[Int],
-  groups: Map[Row, Set[Row]] = Map[Row, Set[Row]]())
+  groups: Map[Row, Set[Row]] = Map())
 {
   def apply(key: Row): Set[Row] = groups.getOrElse(key, Set())
 
@@ -183,7 +180,7 @@ private case class Multiplicand(
 }
 
 
-private case class RowCounter(rows: Map[Row, Int] = Map[Row, Int]()) {
+private case class RowCounter(rows: Map[Row, Int] = Map()) {
   def contains(row: Row) = rows.contains(row)
   def toSet: Set[Row] = rows.keySet
 
