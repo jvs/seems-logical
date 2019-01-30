@@ -855,4 +855,174 @@ val tests = Tests {
     R("blue", "found", "waiting")
   ))
 }
+
+"Try a simple aggregation with one group" - {
+  val Foo = Table("a", "b", "c")
+  val Agg = View(
+    SELECT ("a", COUNT("*"), SET_OF("c"))
+    FROM Foo
+    GROUP_BY "a"
+  )
+
+  val start = Database(Foo, Agg)
+  val snap1 = start {
+    INSERT INTO Foo VALUES (
+      "x", 1, 1,
+      "y", 2, 1,
+      "x", 3, 2,
+      "y", 4, 2,
+      "x", 5, 3,
+      "y", 6, 2
+    )
+  }
+  val snap2 = snap1 {
+    DELETE FROM Foo VALUES (
+      "x", 1, 1,
+      "y", 6, 2
+    )
+  }
+  val snap3 = snap2 {
+    DELETE FROM Foo VALUES (
+      "x", 3, 2,
+      "y", 2, 1,
+      "y", 4, 2
+    )
+  }
+
+  assert(start(Foo) == Set())
+  assert(start(Agg) == Set())
+  assert(snap1(Agg) == Set(
+    R("x", 3, Set(1, 2, 3)),
+    R("y", 3, Set(1, 2))
+  ))
+  assert(snap2(Agg) == Set(
+    R("x", 2, Set(2, 3)),
+    R("y", 2, Set(1, 2))
+  ))
+  assert(snap3(Agg) == Set(R("x", 1, Set(3))))
+}
+
+"Try a simple aggregation with two groups" - {
+  val Foo = Table("a", "b", "c", "d")
+  val Agg = View(
+    SELECT ("a", AVG("b"), "c", SUM("d"))
+    FROM Foo
+    GROUP_BY ("a", "c")
+  )
+  val start = Database(Foo, Agg)
+  val snap1 = start {
+    INSERT INTO Foo VALUES (
+      "a", 1, true, 1,
+      "a", 2, true, -1,
+      "a", 3, true, 0,
+
+      "a", 4, false, 10,
+      "a", 5, false, 20,
+      "a", 6, false, 30,
+
+      "b", 10, true, 1,
+      "b", 20, true, 1,
+
+      "b", 10, false, 10,
+      "b", -10, false, 0
+    )
+  }
+  val snap2 = snap1 {
+    DELETE FROM Foo VALUES (
+      "a", 1, true, 1,
+      "a", 5, false, 20,
+      "a", 6, false, 30,
+      "b", 20, true, 1,
+      "b", 10, false, 10,
+      "b", -10, false, 0
+    )
+  }
+
+  assert(start(Foo) == Set())
+  assert(start(Agg) == Set())
+  assert(snap1(Agg) == Set(
+    R("a", 2, true, 0),
+    R("a", 5, false, 60),
+    R("b", 15, true, 2),
+    R("b", 0, false, 10),
+  ))
+  assert(snap2(Agg) == Set(
+    R("a", 2.5, true, -1),
+    R("a", 4, false, 10),
+    R("b", 10, true, 1)
+  ))
+}
+
+"Try MIN and MAX aggregate functions" - {
+  val Foo = Table("a", "b")
+  val Agg = View(
+    SELECT ("a", MIN("b"), MAX("b"), SUM("b"), COUNT("b"))
+    FROM Foo
+    GROUP_BY "a"
+  )
+  val start = Database(Foo, Agg)
+  val snap1 = start {
+    INSERT INTO Foo VALUES (
+      "x", 1,
+      "x", 2,
+      "x", 3,
+      "x", 4,
+
+      "y", -1,
+      "y", -2,
+      "y", -3,
+      "y", -4,
+
+      "z", -10,
+      "z", 0,
+      "z", 10
+    )
+  }
+  val snap2 = snap1 {
+    DELETE FROM Foo VALUES (
+      "x", 1,
+      "y", -3,
+      "y", -4,
+      "z", -10,
+      "z", 0,
+      "z", 10
+    )
+  }
+
+  assert(start(Foo) == Set())
+  assert(start(Agg) == Set())
+  assert(snap1(Agg) == Set(
+    R("x", 1, 4, 10, 4),
+    R("y", -4, -1, -10, 4),
+    R("z", -10, 10, 0, 3)
+  ))
+  assert(snap2(Agg) == Set(
+    R("x", 2, 4, 9, 3),
+    R("y", -2, -1, -3, 2)
+  ))
+}
+
+"Try aggregate functions with no groups" - {
+  val Foo = Table("a")
+  val Agg = View(SELECT (MIN("a"), MAX("a")) FROM Foo)
+  val start = Database(Foo, Agg)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6) }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (1, 6) }
+  val snap3 = snap2 { INSERT INTO Foo VALUES (0, 10) }
+  val snap4 = snap3 { INSERT INTO Foo VALUES (1, 6) }
+  assert(snap1(Agg) == Set(R(1, 6)))
+  assert(snap2(Agg) == Set(R(2, 5)))
+  assert(snap3(Agg) == Set(R(0, 10)))
+  assert(snap4(Agg) == Set(R(0, 10)))
+}
+
+"Try using COUNT(*) with no groups" - {
+  val Foo = Table("a", "b")
+  val Agg = View(SELECT (COUNT("*")) FROM Foo)
+  val start = Database(Foo, Agg)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (1, 2, 3, 4) }
+  assert(snap1(Agg) == Set(R(5)))
+  assert(snap2(Agg) == Set(R(3)))
+}
 }}

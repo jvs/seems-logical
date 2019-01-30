@@ -55,10 +55,7 @@ package object logical {
   val AVG = aggFunc("AVG")
   val COUNT = aggFunc("COUNT")
   val MAX = aggFunc("MAX")
-  val MEDIAN = aggFunc("MEDIAN")
   val MIN = aggFunc("MIN")
-  val MODE = aggFunc("MODE")
-  // Maybe provide "LIST_OF" or "BAG_OF" as well?
   val SET_OF = aggFunc("SET_OF")
   val SUM = aggFunc("SUM")
 
@@ -134,9 +131,9 @@ package object logical {
     select: Vector[Column],
     from: Term,
     predicate: Option[Record => Boolean] = None,
-    groups: Vector[Column] = Vector()
+    groups: Vector[String] = Vector()
   ) extends Term {
-    def GROUP_BY(columns: Column*) = copy(groups = groups ++ columns)
+    def GROUP_BY(columns: String*) = copy(groups = groups ++ columns)
 
     def WHERE(p: Record => Boolean): Statement = {
       copy(predicate=Some(predicate match {

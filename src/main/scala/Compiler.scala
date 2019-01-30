@@ -1,5 +1,6 @@
 package seems.logical
 
+import scala.collection.SortedMap
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, Queue}
 
@@ -66,27 +67,64 @@ private class Compiler {
       case None => stmt.from
     })
 
-    (stmt.select, stmt.groups) match {
-      case (Vector(NamedColumn("*")), Vector()) => return src
-      case (Vector(NamedColumn("*")), _) => throw new SchemaError(
-        "Cannot use both \"SELECT *\" and \"GROUP_BY\" in the same statement"
-      )
-      case (cols, Vector()) if cols.exists(_.isInstanceOf[AggregateColumn]) => {
-        // SHOULD: Support this, if all of the columns are aggregates.
-        throw new SchemaError("Aggregate columns require a \"GROUP_BY\" expression.")
-      }
-      case (cols, Vector()) => {
-        val projection = cols.map {
-          case NamedColumn(a) => a
-          case AliasColumn(a, _) => a.name
-          case _ => throw new SchemaError("Expected non-aggregated columns.")
-        }
-        return CompiledTerm(adaptSchema(src, projection), stmt.schema)
-      }
-      case (cols, groups) => {
-        throw new RuntimeException("WIP")
+    if (stmt.select == Vector(NamedColumn("*"))) {
+      if (stmt.groups.isEmpty) {
+        return src
+      } else {
+        throw new SchemaError(
+          "Cannot use both \"SELECT *\" and \"GROUP_BY\" in the same statement"
+        )
       }
     }
+
+    val srcCols = stmt.select.map {
+      case AliasColumn(a, _) => a
+      case a => a
+    }
+
+    val needsReduce = srcCols.exists(_.isInstanceOf[AggregateColumn])
+
+    if (!needsReduce && stmt.groups.nonEmpty) {
+      throw new SchemaError("Unexpected \"GROUP_BY\" expression.")
+    }
+
+    if (!needsReduce) {
+      val projection = srcCols.map(_.name)
+      return CompiledTerm(adaptSchema(src, projection), stmt.schema)
+    }
+
+    srcCols.foreach {
+      case NamedColumn(a) => if (!stmt.groups.contains(a)) {
+        throw new SchemaError(s"Expected aggregate column. Received: $a")
+      }
+      case _ => ()
+    }
+
+    val functions = srcCols.map {
+      case NamedColumn(a) => new StaticColumnReducer(src.schema.indexOf(a))
+      case AggregateColumn("COUNT", "*") => new CountColumnReducer(0)
+      case AggregateColumn(a, b) => {
+        val column = src.schema.indexOf(b)
+        if (column == -1) {
+          throw new SchemaError(s"Unexpected column: $b")
+        }
+        a match {
+          case "AVG" => new AvgColumnReducer(column)
+          case "COUNT" => new CountColumnReducer(column)
+          case "MAX" => new MinMaxColumnReducer(column, false)
+          case "MIN" => new MinMaxColumnReducer(column, true)
+          case "SET_OF" => new SetColumnReducer(column)
+          case "SUM" => new SumColumnReducer(column)
+          case _ => throw new SchemaError(s"Unexpected aggregate function: $a")
+        }
+      }
+      case a => throw new RuntimeException(s"Unexpected column: $a")
+    }
+
+    val groupBy = stmt.groups.map { c => src.schema.indexOf(c) }
+    val node = register(new Reducer(nextId, groupBy, functions))
+    connect(src.node, node)
+    return CompiledTerm(node, stmt.schema)
   }
 
   private def compile(term: Or): CompiledTerm = {
@@ -360,5 +398,222 @@ private class Subtract(id: Int, pos: PositiveSide, neg: NegativeSide) extends No
       if (newNeg eq neg) None else Some(new Subtract(id, pos, newNeg))
     }
     Response(repl, inserted, deleted)
+  }
+}
+
+
+private class Reducer(
+  id: Int,
+  groupBy: Vector[Int],
+  functions: Vector[ColumnReducer],
+  rows: Map[Row, Vector[ColumnReducer]] = Map()
+) extends Node(id) {
+  def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
+    var newRows = rows
+    val updatedKeys = mutable.Set[Row]()
+
+    for (row <- cast.inserts) {
+      val key = groupBy.map { i => row(i) }
+      val prev = newRows.getOrElse(key, functions)
+      val next = prev.map { x => x.insert(row(x.column)) }
+      newRows += (key -> next)
+      updatedKeys += key
+    }
+
+    for (row <- cast.deletes) {
+      val key = groupBy.map { i => row(i) }
+      if (newRows.contains(key)){
+        val prev = newRows(key)
+        val next = prev.map { x => x.delete(row(x.column)) }
+        val nonEmpty = next.forall { x => x.nonEmpty }
+        if (nonEmpty) {
+          newRows += (key -> next)
+        } else {
+          newRows -= key
+        }
+        updatedKeys += key
+      }
+    }
+
+    val inserted = ArrayBuffer[Row]()
+    val deleted = ArrayBuffer[Row]()
+
+    for (key <- updatedKeys) {
+      val prev = rows.getOrElse(key, Vector()).map { x => x.value }
+      val next = newRows.getOrElse(key, Vector()).map { x => x.value }
+
+      if (prev != next) {
+        if (next.length > 0) {
+          inserted += next
+        }
+        if (prev.length > 0) {
+          deleted += prev
+        }
+      }
+    }
+
+    val repl = new Reducer(id, groupBy, functions, newRows)
+    Response(Some(repl), inserted, deleted)
+  }
+}
+
+
+private sealed trait ColumnReducer {
+  val column: Int
+  def nonEmpty: Boolean
+  def value: Any
+  def insert(value: Any): ColumnReducer
+  def delete(value: Any): ColumnReducer
+}
+
+
+private class StaticColumnReducer(val column: Int) extends ColumnReducer {
+  def nonEmpty = false
+  def value = 0
+  def insert(value: Any) = new ValueColumnReducer(column, value)
+  def delete(value: Any) = this
+}
+
+
+private class ValueColumnReducer(val column: Int, val value: Any) extends ColumnReducer {
+  def nonEmpty = true
+  def insert(value: Any) = this
+  def delete(value: Any) = this
+}
+
+
+private class AvgColumnReducer(
+  val column: Int,
+  sum: BigDecimal = 0,
+  count: BigDecimal = 0
+) extends ColumnReducer {
+  def nonEmpty = count > 0
+  def value = sum / count
+
+  def insert(value: Any) = {
+    val d = toBigDecimal(value)
+    new AvgColumnReducer(column, sum + d, count + 1)
+  }
+
+  def delete(value: Any) = {
+    val d = toBigDecimal(value)
+    new AvgColumnReducer(column, sum - d, count - 1)
+  }
+}
+
+
+private class CountColumnReducer(val column: Int, count: Long = 0) extends ColumnReducer {
+  def nonEmpty = count > 0
+  def value = count
+  def insert(value: Any) = new CountColumnReducer(column, count + 1)
+  def delete(value: Any) = new CountColumnReducer(column, count - 1)
+}
+
+
+private class SetColumnReducer(
+  val column: Int,
+  counts: Map[Any, Int] = Map(),
+  values: Set[Any] = Set()
+) extends ColumnReducer {
+  def nonEmpty = values.nonEmpty
+  def value = values
+
+  def insert(value: Any) = {
+    val count = counts.getOrElse(value, 0) + 1
+    val nextCounts = counts + (value -> count)
+    val nextValues = if (count == 1) (values + value) else values
+    new SetColumnReducer(column, nextCounts, nextValues)
+  }
+
+  def delete(value: Any) = {
+    if (values.contains(value)) {
+      val count = counts(value) - 1
+      if (count == 0) {
+        new SetColumnReducer(column, counts - value, values - value)
+      } else {
+        new SetColumnReducer(column, counts + (value -> count), values)
+      }
+    } else {
+      this
+    }
+  }
+}
+
+
+private class SumColumnReducer(
+  val column: Int,
+  sum: BigDecimal = 0,
+  count: Long = 0
+) extends ColumnReducer {
+  def nonEmpty = count > 0
+  def value = sum
+
+  def insert(value: Any) = {
+    val d = toBigDecimal(value)
+    new SumColumnReducer(column, sum + d, count + 1)
+  }
+
+  def delete(value: Any) = {
+    val d = toBigDecimal(value)
+    new SumColumnReducer(column, sum - d, count - 1)
+  }
+}
+
+
+private class MinMaxColumnReducer(val column: Int, isMin: Boolean) extends ColumnReducer {
+  def nonEmpty = false
+  def value = None
+
+  def insert(value: Any) = {
+    new SortedColumnReducer(column, isMin, SortedMap(toBigDecimal(value) -> 1L))
+  }
+
+  def delete(value: Any) = this
+}
+
+
+private class SortedColumnReducer(
+  val column: Int,
+  isMin: Boolean,
+  counts: SortedMap[BigDecimal, Long],
+) extends ColumnReducer {
+  def nonEmpty = counts.nonEmpty
+  def value = if (isMin) counts.min._1 else counts.max._1
+
+  def insert(value: Any) = {
+    val x = toBigDecimal(value)
+    val newCount = counts.getOrElse(x, 0L) + 1L
+    new SortedColumnReducer(column, isMin, counts + (x -> newCount))
+  }
+
+  def delete(value: Any) = {
+    val x = toBigDecimal(value)
+    val newCounts = if (!counts.contains(x)) {
+      counts
+    } else {
+      val newCount = counts(x) - 1L
+      if (newCount == 0L) {
+        counts - x
+      } else {
+        counts + (x -> newCount)
+      }
+    }
+    new SortedColumnReducer(column, isMin, newCounts)
+  }
+}
+
+
+private object toBigDecimal {
+  def apply(obj: Any): BigDecimal = obj match {
+    case x:BigDecimal => x
+    case x:BigInt => BigDecimal(x)
+    case x:Byte => BigDecimal(x.toInt)
+    case x:Double => BigDecimal(x)
+    case x:Float => BigDecimal(x.toDouble)
+    case x:Int => BigDecimal(x)
+    case x:Long => BigDecimal(x)
+    case x:Short => BigDecimal(x.toInt)
+    case x:String => BigDecimal(x)
+    case _ => throw new RuntimeException(s"Cannot convert object to decimal value: $obj")
   }
 }
