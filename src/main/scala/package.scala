@@ -31,7 +31,7 @@ package object logical {
   }
 
   case class SELECT(first: Column, columns: Column*) {
-    def FROM(term: Term) = Statement(first +: columns.toVector, term)
+    def FROM(term: Term) = SelectStatement(first +: columns.toVector, term)
   }
 
   object INSERT {
@@ -127,7 +127,7 @@ package object logical {
     lazy val schema = term.schema
   }
 
-  case class Statement(
+  case class SelectStatement(
     select: Vector[Column],
     from: Term,
     predicate: Option[Record => Boolean] = None,
@@ -135,7 +135,7 @@ package object logical {
   ) extends Term {
     def GROUP_BY(columns: String*) = copy(groups = groups ++ columns)
 
-    def WHERE(p: Record => Boolean): Statement = {
+    def WHERE(p: Record => Boolean): SelectStatement = {
       copy(predicate=Some(predicate match {
         case Some(q) => (x => q(x) && p(x))
         case None => p

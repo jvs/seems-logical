@@ -31,7 +31,7 @@ private class Compiler {
     case x: Or => compile(x)
     case x: Project => compile(x)
     case x: Rename => compile(x)
-    case x: Statement => compile(x)
+    case x: SelectStatement => compile(x)
     case x: Table => compile(x)
     case x: View => compile(x)
     case x: Where => compile(x)
@@ -61,7 +61,7 @@ private class Compiler {
     datasets(view)
   }
 
-  private def compile(stmt: Statement): CompiledTerm = {
+  private def compile(stmt: SelectStatement): CompiledTerm = {
     val src = compile(stmt.predicate match {
       case Some(p) => Where(stmt.from, p)
       case None => stmt.from
