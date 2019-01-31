@@ -374,7 +374,7 @@ private class Transform(
 }
 
 
-/** Represents a Table or a View in a database. It is just a set of rows. */
+/** Represents a Table or a View in a book. It is just a set of rows. */
 private class Source(id: Int, val rows: Set[Row]) extends Node(id) {
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     val inserted = cast.inserts.filter(x => !rows(x))

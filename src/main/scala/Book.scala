@@ -83,18 +83,18 @@ private case class Response(
 
 
 object transact {
-  def apply(database: Book, table: Table, row: Row, isInsert: Boolean): Book = {
+  def apply(book: Book, table: Table, row: Row, isInsert: Boolean): Book = {
     // This logic is much more natural as a few mututally recursive functions.
     // But then many interesting logic programs could easliy overflow the stack.
     // So this function uses a big ugly loop to avoid using the call stack.
-    var current = database
+    var current = book
     var stack = List[Command]()
 
     def push(cmd: Command): Unit = {
       stack = cmd +: stack
     }
 
-    val node = database.nodes(database.datasets(table))
+    val node = book.nodes(book.datasets(table))
     val cast = Broadcast(
       sender = -1,
       inserts = if (isInsert) ArrayBuffer(row) else ArrayBuffer(),
