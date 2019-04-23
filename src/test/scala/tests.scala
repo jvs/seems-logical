@@ -1035,4 +1035,52 @@ val tests = Tests {
   assertConsistent(snap1)
   assertConsistent(snap2)
 }
+
+"Try simple TABLE_OF aggregate function" - {
+  val Foo = Table("a", "b", "c")
+  val Agg = View(SELECT ("a", TABLE_OF("b", "c") AS "t") FROM Foo GROUP_BY "a")
+  val start = Book(Foo, Agg)
+  val snap1 = start { INSERT INTO Foo VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) }
+  val snap2 = snap1 { DELETE FROM Foo VALUES (1, 2, 3, 7, 8, 9) }
+  val snap3 = snap2 { INSERT INTO Foo VALUES (4, 50, 60, 10, 11, 13) }
+  assert(snap1(Agg) == Set(
+    R(1, Set(R(2, 3))), R(4, Set(R(5, 6))),
+    R(7, Set(R(8, 9))), R(10, Set(R(11, 12))),
+  ))
+  assert(snap2(Agg) == Set(
+    R(4, Set(R(5, 6))), R(10, Set(R(11, 12))),
+  ))
+  assert(snap3(Agg) == Set(
+    R(4, Set(R(5, 6), R(50, 60))), R(10, Set(R(11, 12), R(11, 13))),
+  ))
+  assertConsistent(snap1)
+  assertConsistent(snap2)
+  assertConsistent(snap3)
+}
+
+"Try another TABLE_OF aggregate function" - {
+  val Foo = Table("a", "b", "c", "d")
+  val Agg = View(SELECT ("a", TABLE_OF("b", "c") AS "t") FROM Foo GROUP_BY "a")
+  val start = Book(Foo, Agg)
+  val snap1 = start { INSERT INTO Foo VALUES (
+    1, 2, 3, 4,
+    1, 2, 3, 5,
+    2, 3, 4, 5,
+    3, 4, 5, 6,
+  ) }
+  val snap2a = snap1 { DELETE FROM Foo VALUES (1, 2, 3, 4, 2, 3, 4, 5) }
+  val snap2b = snap1 { DELETE FROM Foo VALUES (1, 2, 3, 5, 3, 4, 5, 6) }
+  assert(snap1(Agg) == Set(
+    R(1, Set(R(2, 3))), R(2, Set(R(3, 4))), R(3, Set(R(4, 5))),
+  ))
+  assert(snap2a(Agg) == Set(
+    R(1, Set(R(2, 3))), R(3, Set(R(4, 5))),
+  ))
+  assert(snap2b(Agg) == Set(
+    R(1, Set(R(2, 3))), R(2, Set(R(3, 4))),
+  ))
+  assertConsistent(snap1)
+  assertConsistent(snap2a)
+  assertConsistent(snap2b)
+}
 }}

@@ -59,6 +59,8 @@ package object logical {
   val SET_OF = aggFunc("SET_OF")
   val SUM = aggFunc("SUM")
 
+  def TABLE_OF(cols: String*) = AggregateColumn("TABLE_OF", cols:_*)
+
   sealed trait Term {
     def and(other: Term): Term = And(this, other)
     def apply(args: String*) = Rename(this, args.toVector)
@@ -157,8 +159,8 @@ package object logical {
 
   implicit def namedColumn(name: String) = NamedColumn(name)
 
-  case class AggregateColumn(functionName: String, columnName: String) extends Column {
-    def name = s"$functionName($columnName)"
+  case class AggregateColumn(functionName: String, columnNames: String*) extends Column {
+    def name = s"$functionName(${columnNames.mkString(", ")})"
   }
 
   case class AliasColumn(source: Column, alias: String) extends Column {

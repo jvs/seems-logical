@@ -100,14 +100,24 @@ private class Compiler {
       case _ => ()
     }
 
+    def indexOf(name: String): Int = {
+      val index = src.schema.indexOf(name)
+      if (index == -1) {
+        throw new SchemaError(s"Unexpected column: $name")
+      } else {
+        return index
+      }
+    }
+
     val functions = srcCols.map {
       case NamedColumn(a) => new StaticColumnReducer(src.schema.indexOf(a))
       case AggregateColumn("COUNT", "*") => new CountColumnReducer(0)
+      case a: AggregateColumn if a.functionName == "TABLE_OF" => {
+        val columns = a.columnNames.map { name => indexOf(name) }
+        new TableReducer(columns.toVector, Map())
+      }
       case AggregateColumn(a, b) => {
-        val column = src.schema.indexOf(b)
-        if (column == -1) {
-          throw new SchemaError(s"Unexpected column: $b")
-        }
+        val column = indexOf(b)
         a match {
           case "AVG" => new AvgColumnReducer(column)
           case "COUNT" => new CountColumnReducer(column)
@@ -405,8 +415,8 @@ private class Subtract(id: Int, pos: PositiveSide, neg: NegativeSide) extends No
 private class Reducer(
   id: Int,
   groupBy: Vector[Int],
-  functions: Vector[ColumnReducer],
-  rows: Map[Row, Vector[ColumnReducer]] = Map()
+  functions: Vector[ReduceFunction],
+  rows: Map[Row, Vector[ReduceFunction]] = Map()
 ) extends Node(id) {
   def receive(cast: Broadcast, isLeftSide: Boolean): Response = {
     var newRows = rows
@@ -415,7 +425,7 @@ private class Reducer(
     for (row <- cast.inserts) {
       val key = groupBy.map { i => row(i) }
       val prev = newRows.getOrElse(key, functions)
-      val next = prev.map { x => x.insert(row(x.column)) }
+      val next = prev.map { x => x.insertRow(row) }
       newRows += (key -> next)
       updatedKeys += key
     }
@@ -424,7 +434,7 @@ private class Reducer(
       val key = groupBy.map { i => row(i) }
       if (newRows.contains(key)){
         val prev = newRows(key)
-        val next = prev.map { x => x.delete(row(x.column)) }
+        val next = prev.map { x => x.deleteRow(row) }
         val nonEmpty = next.forall { x => x.nonEmpty }
         if (nonEmpty) {
           newRows += (key -> next)
@@ -442,6 +452,7 @@ private class Reducer(
       val prev = rows.getOrElse(key, Vector()).map { x => x.value }
       val next = newRows.getOrElse(key, Vector()).map { x => x.value }
 
+      // MAY: Consider if there's a faster option here.
       if (prev != next) {
         if (next.length > 0) {
           inserted += next
@@ -458,27 +469,36 @@ private class Reducer(
 }
 
 
-private sealed trait ColumnReducer {
-  val column: Int
+private sealed trait ReduceFunction {
   def nonEmpty: Boolean
   def value: Any
-  def insert(value: Any): ColumnReducer
-  def delete(value: Any): ColumnReducer
+  def insertRow(row: Row): ReduceFunction
+  def deleteRow(row: Row): ReduceFunction
+}
+
+
+private sealed trait ColumnReducer extends ReduceFunction {
+  val column: Int
+  def insertValue(value: Any): ColumnReducer
+  def deleteValue(value: Any): ColumnReducer
+
+  def insertRow(row: Row): ColumnReducer = insertValue(row(column))
+  def deleteRow(row: Row): ColumnReducer = deleteValue(row(column))
 }
 
 
 private class StaticColumnReducer(val column: Int) extends ColumnReducer {
   def nonEmpty = false
   def value = 0
-  def insert(value: Any) = new ValueColumnReducer(column, value)
-  def delete(value: Any) = this
+  def insertValue(value: Any) = new ValueColumnReducer(column, value)
+  def deleteValue(value: Any) = this
 }
 
 
 private class ValueColumnReducer(val column: Int, val value: Any) extends ColumnReducer {
   def nonEmpty = true
-  def insert(value: Any) = this
-  def delete(value: Any) = this
+  def insertValue(value: Any) = this
+  def deleteValue(value: Any) = this
 }
 
 
@@ -490,12 +510,12 @@ private class AvgColumnReducer(
   def nonEmpty = count > 0
   def value = sum / count
 
-  def insert(value: Any) = {
+  def insertValue(value: Any) = {
     val d = toBigDecimal(value)
     new AvgColumnReducer(column, sum + d, count + 1)
   }
 
-  def delete(value: Any) = {
+  def deleteValue(value: Any) = {
     val d = toBigDecimal(value)
     new AvgColumnReducer(column, sum - d, count - 1)
   }
@@ -505,8 +525,8 @@ private class AvgColumnReducer(
 private class CountColumnReducer(val column: Int, count: Long = 0) extends ColumnReducer {
   def nonEmpty = count > 0
   def value = count
-  def insert(value: Any) = new CountColumnReducer(column, count + 1)
-  def delete(value: Any) = new CountColumnReducer(column, count - 1)
+  def insertValue(value: Any) = new CountColumnReducer(column, count + 1)
+  def deleteValue(value: Any) = new CountColumnReducer(column, count - 1)
 }
 
 
@@ -518,14 +538,14 @@ private class SetColumnReducer(
   def nonEmpty = values.nonEmpty
   def value = values
 
-  def insert(value: Any) = {
+  def insertValue(value: Any) = {
     val count = counts.getOrElse(value, 0) + 1
     val nextCounts = counts + (value -> count)
     val nextValues = if (count == 1) (values + value) else values
     new SetColumnReducer(column, nextCounts, nextValues)
   }
 
-  def delete(value: Any) = {
+  def deleteValue(value: Any) = {
     if (values.contains(value)) {
       val count = counts(value) - 1
       if (count == 0) {
@@ -548,12 +568,12 @@ private class SumColumnReducer(
   def nonEmpty = count > 0
   def value = sum
 
-  def insert(value: Any) = {
+  def insertValue(value: Any) = {
     val d = toBigDecimal(value)
     new SumColumnReducer(column, sum + d, count + 1)
   }
 
-  def delete(value: Any) = {
+  def deleteValue(value: Any) = {
     val d = toBigDecimal(value)
     new SumColumnReducer(column, sum - d, count - 1)
   }
@@ -564,11 +584,11 @@ private class MinMaxColumnReducer(val column: Int, isMin: Boolean) extends Colum
   def nonEmpty = false
   def value = None
 
-  def insert(value: Any) = {
+  def insertValue(value: Any) = {
     new SortedColumnReducer(column, isMin, SortedMap(toBigDecimal(value) -> 1L))
   }
 
-  def delete(value: Any) = this
+  def deleteValue(value: Any) = this
 }
 
 
@@ -580,13 +600,13 @@ private class SortedColumnReducer(
   def nonEmpty = counts.nonEmpty
   def value = if (isMin) counts.min._1 else counts.max._1
 
-  def insert(value: Any) = {
+  def insertValue(value: Any) = {
     val x = toBigDecimal(value)
     val newCount = counts.getOrElse(x, 0L) + 1L
     new SortedColumnReducer(column, isMin, counts + (x -> newCount))
   }
 
-  def delete(value: Any) = {
+  def deleteValue(value: Any) = {
     val x = toBigDecimal(value)
     val newCounts = if (!counts.contains(x)) {
       counts
@@ -599,6 +619,35 @@ private class SortedColumnReducer(
       }
     }
     new SortedColumnReducer(column, isMin, newCounts)
+  }
+}
+
+
+private class TableReducer(
+  columns: Vector[Int],
+  rows: Map[Row, Int],
+) extends ReduceFunction {
+  def nonEmpty: Boolean = rows.nonEmpty
+  def value: Any = rows.keySet
+
+  def insertRow(row: Row): ReduceFunction = {
+    val newRow = columns.map { i => row(i) }
+    val count = rows.getOrElse(newRow, 0)
+    val newRows = rows + (newRow -> (count + 1))
+    new TableReducer(columns, newRows)
+  }
+
+  def deleteRow(row: Row): ReduceFunction = {
+    val newRow = columns.map { i => row(i) }
+    val count = rows.getOrElse(newRow, 0)
+    val newRows = if (count == 1) {
+      rows - newRow
+    } else if (count > 1) {
+      rows + (newRow -> (count - 1))
+    } else {
+      rows
+    }
+    new TableReducer(columns, newRows)
   }
 }
 
